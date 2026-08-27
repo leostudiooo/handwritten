@@ -36,16 +36,23 @@ export default function App() {
 
   // CV Pipeline parameters
   const [config, setConfig] = useState<ProcessingConfig>({
-    targetWidth: 1182,          // 300 PPI @ 100mm
-    targetHeight: 236,          // 300 PPI @ 20mm
+    rowCount: 3,                // Default 3 rows (100x20mm each)
+    targetWidth: 2364,          // 600 DPI @ 100mm (Ultra-high precision for morphological editing)
+    targetHeight: 472,          // 600 DPI @ 20mm
     paddingCutPercentX: 5,      // 5% dead zone cut
     paddingCutPercentY: 5,
-    adaptiveBlockSize: 37,      // Odd 31-65
+    thresholdMode: 'adaptive',  // 'adaptive' or 'manual'
+    manualThreshold: 140,       // Default 140 (0-255)
+    adaptiveBlockSize: 51,      // Odd 31-101
     adaptiveC: 8,               // Constant C 5-20
-    enableMorphClose: true,     // 2x2 repair
+    enableMorphClose: true,     // Morph repair
+    morphMode: 'none',          // 'none' | 'erode' | 'dilate' | 'open' | 'close'
+    morphStrength: 1,           // 1 to 6 px for 600 DPI
+    minNoiseArea: 16,           // 16px speckle/noise removal for 600 DPI
     emptyRowThresholdPercent: 0.3, // <0.3% empty discard
     invertResult: false,
     inkColor: '#000000',
+    chromaSensitivity: 50,      // 0-100: 0 = off, 1-100 = chroma filter sensitivity
   });
 
   // Processing & Results
@@ -72,16 +79,37 @@ export default function App() {
     setScaleRatio(ratio);
     setActivePresetId(presetId || null);
 
-    // Auto predict 8 points on preview image
-    const initialMesh = autoPredictLadderMesh(prevImg.naturalWidth, prevImg.naturalHeight);
+    // Auto predict mesh on preview image with edge detection
+    let initialMesh: LadderPoints;
+    const currentRows = config.rowCount || 3;
+    try {
+      const cvs = document.createElement('canvas');
+      cvs.width = prevImg.naturalWidth;
+      cvs.height = prevImg.naturalHeight;
+      const ctx = cvs.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(prevImg, 0, 0);
+        const imgData = ctx.getImageData(0, 0, prevImg.naturalWidth, prevImg.naturalHeight);
+        initialMesh = autoPredictLadderMesh(prevImg.naturalWidth, prevImg.naturalHeight, imgData, currentRows);
+      } else {
+        initialMesh = autoPredictLadderMesh(prevImg.naturalWidth, prevImg.naturalHeight, undefined, currentRows);
+      }
+    } catch {
+      initialMesh = autoPredictLadderMesh(prevImg.naturalWidth, prevImg.naturalHeight, undefined, currentRows);
+    }
     setLadderMesh(initialMesh);
 
     setCurrentStep('mesh');
   };
 
   // Run Standardization Pipeline (Web Worker with Async Fallback)
-  const handleRunProcessing = async () => {
+  const handleRunProcessing = async (overrideConfig?: ProcessingConfig) => {
     if (!originalImage || !previewImage) return;
+
+    const currentConfig = overrideConfig || config;
+    if (overrideConfig) {
+      setConfig(overrideConfig);
+    }
 
     setIsProcessing(true);
 
@@ -137,13 +165,13 @@ export default function App() {
             type: 'PROCESS_IMAGE',
             imageData: originalImageData,
             mesh: fullResMesh,
-            config,
+            config: currentConfig,
           });
         });
       } catch (workerErr) {
         console.warn('Web Worker execution fallback to microtask:', workerErr);
         // Fallback directly using CV Engine
-        result = await runStandardizationPipeline(originalImageData, fullResMesh, config);
+        result = await runStandardizationPipeline(originalImageData, fullResMesh, currentConfig);
       }
 
       setProcessingResult(result);
@@ -153,6 +181,13 @@ export default function App() {
       alert(`处理失败: ${err?.message || '未知错误'}`);
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleSaveSettings = (newConfig: ProcessingConfig) => {
+    setConfig(newConfig);
+    if (currentStep === 'result' && originalImage && previewImage) {
+      handleRunProcessing(newConfig);
     }
   };
 
@@ -189,8 +224,10 @@ export default function App() {
             previewImg={previewImage}
             scaleRatio={scaleRatio}
             ladderMesh={ladderMesh}
+            config={config}
             onMeshChange={setLadderMesh}
-            onGenerate={handleRunProcessing}
+            onConfigChange={setConfig}
+            onGenerate={() => handleRunProcessing()}
             isProcessing={isProcessing}
             onCancel={() => setCurrentStep('upload')}
             scenarioNotes={activeScenario?.notes}
@@ -200,8 +237,12 @@ export default function App() {
         {currentStep === 'result' && processingResult && (
           <ResultViewer
             result={processingResult}
+            config={config}
+            onUpdateConfigAndRerun={handleRunProcessing}
             onBackToEdit={() => setCurrentStep('mesh')}
             onNewImage={handleReset}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+            isProcessing={isProcessing}
           />
         )}
       </main>
@@ -211,7 +252,7 @@ export default function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         config={config}
-        onSaveConfig={setConfig}
+        onSaveConfig={handleSaveSettings}
       />
 
       <HelpModal

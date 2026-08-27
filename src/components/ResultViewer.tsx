@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ProcessedRow, ProcessingResult } from '../types';
+import { ProcessedRow, ProcessingResult, ProcessingConfig, MorphMode } from '../types';
 import {
   Download,
   Copy,
@@ -12,25 +12,64 @@ import {
   Eye,
   Layers,
   Sparkles,
-  ExternalLink,
+  SlidersHorizontal,
+  Wand2,
+  Minimize2,
+  Maximize2,
+  Palette,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import confetti from 'canvas-confetti';
 
 interface ResultViewerProps {
   result: ProcessingResult;
+  config: ProcessingConfig;
+  onUpdateConfigAndRerun: (newConfig: ProcessingConfig) => void;
   onBackToEdit: () => void;
   onNewImage: () => void;
+  onOpenSettings: () => void;
+  isProcessing?: boolean;
 }
 
 export const ResultViewer: React.FC<ResultViewerProps> = ({
   result,
+  config,
+  onUpdateConfigAndRerun,
   onBackToEdit,
   onNewImage,
+  onOpenSettings,
+  isProcessing = false,
 }) => {
   const [bgMode, setBgMode] = useState<'checker' | 'light' | 'dark' | 'cream'>('checker');
   const [copiedRowIdx, setCopiedRowIdx] = useState<number | null>(null);
   const [isZipping, setIsZipping] = useState(false);
+  const [localManualThreshold, setLocalManualThreshold] = useState<number>(config.manualThreshold ?? 140);
+  const [localChromaSensitivity, setLocalChromaSensitivity] = useState<number>(config.chromaSensitivity ?? 50);
+  const [localMinNoiseArea, setLocalMinNoiseArea] = useState<number>(config.minNoiseArea ?? 8);
+  const [localMorphMode, setLocalMorphMode] = useState<MorphMode>(
+    config.morphMode ?? (config.enableMorphClose ? 'close' : 'none')
+  );
+  const [localMorphStrength, setLocalMorphStrength] = useState<number>(config.morphStrength ?? 1);
+
+  useEffect(() => {
+    setLocalManualThreshold(config.manualThreshold ?? 140);
+  }, [config.manualThreshold]);
+
+  useEffect(() => {
+    setLocalChromaSensitivity(config.chromaSensitivity ?? 50);
+  }, [config.chromaSensitivity]);
+
+  useEffect(() => {
+    setLocalMinNoiseArea(config.minNoiseArea ?? 8);
+  }, [config.minNoiseArea]);
+
+  useEffect(() => {
+    setLocalMorphMode(config.morphMode ?? (config.enableMorphClose ? 'close' : 'none'));
+  }, [config.morphMode, config.enableMorphClose]);
+
+  useEffect(() => {
+    setLocalMorphStrength(config.morphStrength ?? 1);
+  }, [config.morphStrength]);
 
   // Trigger celebration confetti on mount if at least 1 valid row extracted
   useEffect(() => {
@@ -42,6 +81,101 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
       });
     }
   }, [result.processedCount]);
+
+  // Handle Quick Threshold Mode Switch
+  const handleToggleThresholdMode = (mode: 'adaptive' | 'manual') => {
+    if (mode === config.thresholdMode) return;
+    const updated: ProcessingConfig = {
+      ...config,
+      thresholdMode: mode,
+      manualThreshold: localManualThreshold,
+    };
+    onUpdateConfigAndRerun(updated);
+  };
+
+  // Handle Manual Threshold Slider change
+  const handleManualThresholdChange = (val: number) => {
+    setLocalManualThreshold(val);
+  };
+
+  const handleApplyManualThreshold = (val?: number) => {
+    const targetVal = val !== undefined ? val : localManualThreshold;
+    const updated: ProcessingConfig = {
+      ...config,
+      thresholdMode: 'manual',
+      manualThreshold: targetVal,
+    };
+    onUpdateConfigAndRerun(updated);
+  };
+
+  // Handle Chroma Sensitivity (0-100) Slider change & apply
+  const handleChromaSensitivityChange = (val: number) => {
+    setLocalChromaSensitivity(val);
+  };
+
+  const handleApplyChromaSensitivity = (val?: number) => {
+    const targetVal = val !== undefined ? val : localChromaSensitivity;
+    const updated: ProcessingConfig = {
+      ...config,
+      chromaSensitivity: targetVal,
+    };
+    onUpdateConfigAndRerun(updated);
+  };
+
+  // Handle Small Noise Filter Area Threshold Slider change & apply
+  const handleMinNoiseAreaChange = (val: number) => {
+    setLocalMinNoiseArea(val);
+  };
+
+  const handleApplyMinNoiseArea = (val?: number) => {
+    const targetVal = val !== undefined ? val : localMinNoiseArea;
+    const updated: ProcessingConfig = {
+      ...config,
+      minNoiseArea: targetVal,
+    };
+    onUpdateConfigAndRerun(updated);
+  };
+
+  // Handle Morphological Mode Switch
+  const handleMorphModeChange = (mode: MorphMode) => {
+    setLocalMorphMode(mode);
+    const updated: ProcessingConfig = {
+      ...config,
+      morphMode: mode,
+      enableMorphClose: mode === 'close',
+      morphStrength: localMorphStrength,
+    };
+    onUpdateConfigAndRerun(updated);
+  };
+
+  // Handle Morphological Strength change & apply
+  const handleMorphStrengthChange = (val: number) => {
+    setLocalMorphStrength(val);
+  };
+
+  const handleApplyMorphStrength = (val?: number) => {
+    const targetVal = val !== undefined ? val : localMorphStrength;
+    const updated: ProcessingConfig = {
+      ...config,
+      morphMode: localMorphMode,
+      enableMorphClose: localMorphMode === 'close',
+      morphStrength: targetVal,
+    };
+    onUpdateConfigAndRerun(updated);
+  };
+
+  // Quick Preset for Morphology
+  const handleQuickMorphPreset = (mode: MorphMode, strength: number) => {
+    setLocalMorphMode(mode);
+    setLocalMorphStrength(strength);
+    const updated: ProcessingConfig = {
+      ...config,
+      morphMode: mode,
+      enableMorphClose: mode === 'close',
+      morphStrength: strength,
+    };
+    onUpdateConfigAndRerun(updated);
+  };
 
   // Copy single PNG image to clipboard
   const handleCopyImage = async (row: ProcessedRow) => {
@@ -67,7 +201,8 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
   const handleDownloadSingle = (row: ProcessedRow) => {
     const link = document.createElement('a');
     link.href = row.dataUrl;
-    link.download = `handwriting_row_${row.rowIndex + 1}_300ppi.png`;
+    const dpiTag = row.width >= 2000 ? '600dpi' : row.width >= 1100 ? '300dpi' : 'std';
+    link.download = `handwriting_row_${row.rowIndex + 1}_${dpiTag}.png`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -154,7 +289,7 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
             {result.skippedCount > 0 && ` (${result.skippedCount} 行空行已自动过滤)`}
           </h2>
           <p className="text-xs text-stone-500">
-            原图分辨率 {result.originalWidth} × {result.originalHeight} · 标准 300 PPI 规格 (1182 × 236 px) · 背景已转透明 Alpha
+            原图分辨率 {result.originalWidth} × {result.originalHeight} · {config.targetWidth >= 2000 ? '600 DPI 超清出版级' : config.targetWidth >= 1100 ? '300 DPI 印刷级' : '紧凑基准'} ({config.targetWidth} × {config.targetHeight} px) · 背景已转透明 Alpha
           </p>
         </div>
 
@@ -192,6 +327,479 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
             <RefreshCw className="w-3.5 h-3.5" />
             导入新照片
           </button>
+        </div>
+      </div>
+
+      {/* Quick Threshold Adjustment Bar */}
+      <div className="bg-white rounded-2xl border border-stone-200 p-4 shadow-xs space-y-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-stone-900 text-amber-400 flex items-center justify-center">
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <div className="text-xs font-bold text-stone-900 flex items-center gap-2">
+                <span>二值化阈值调控</span>
+                <span className="text-[10px] text-stone-400 font-normal">
+                  (当前: {config.thresholdMode === 'manual' ? `手动阈值 ${config.manualThreshold ?? 140}` : `自适应 B=${config.adaptiveBlockSize}, C=${config.adaptiveC}`})
+                </span>
+              </div>
+              <p className="text-[11px] text-stone-500">
+                可实时在自适应算法与手动阈值间切换，精准微调墨迹深浅与背景纯净度
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Mode Switcher */}
+            <div className="inline-flex bg-stone-100 p-0.5 rounded-xl border border-stone-200 text-xs">
+              <button
+                type="button"
+                id="result-toggle-adaptive-btn"
+                onClick={() => handleToggleThresholdMode('adaptive')}
+                disabled={isProcessing}
+                className={`px-3 py-1 rounded-lg font-medium transition-all ${
+                  config.thresholdMode !== 'manual'
+                    ? 'bg-white text-stone-900 shadow-xs font-bold'
+                    : 'text-stone-500 hover:text-stone-900'
+                }`}
+              >
+                自适应阈值
+              </button>
+              <button
+                type="button"
+                id="result-toggle-manual-btn"
+                onClick={() => handleToggleThresholdMode('manual')}
+                disabled={isProcessing}
+                className={`px-3 py-1 rounded-lg font-medium transition-all ${
+                  config.thresholdMode === 'manual'
+                    ? 'bg-white text-stone-900 shadow-xs font-bold'
+                    : 'text-stone-500 hover:text-stone-900'
+                }`}
+              >
+                手动指定阈值
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="inline-flex items-center gap-1 px-2.5 py-1 text-xs text-stone-600 hover:text-stone-900 rounded-lg hover:bg-stone-100 border border-stone-200 transition-colors"
+            >
+              <Sliders className="w-3 h-3" />
+              更多参数
+            </button>
+          </div>
+        </div>
+
+        {/* Manual Threshold Slider Row (if in manual mode) */}
+        {config.thresholdMode === 'manual' ? (
+          <div className="pt-2 border-t border-stone-100 flex flex-col sm:flex-row sm:items-center gap-3 bg-amber-50/40 p-3 rounded-xl border border-amber-200/50">
+            <div className="flex items-center gap-2 min-w-[140px]">
+              <span className="text-xs font-bold text-amber-950">手动阈值:</span>
+              <span className="font-mono text-xs font-bold text-amber-900 bg-white px-2 py-0.5 rounded border border-amber-300 shadow-xs">
+                {localManualThreshold}
+              </span>
+            </div>
+
+            <div className="flex-1 flex items-center gap-3">
+              <input
+                id="result-manual-threshold-slider"
+                type="range"
+                min="30"
+                max="230"
+                step="1"
+                value={localManualThreshold}
+                onChange={(e) => handleManualThresholdChange(Number(e.target.value))}
+                onMouseUp={() => handleApplyManualThreshold()}
+                onTouchEnd={() => handleApplyManualThreshold()}
+                className="w-full accent-amber-600"
+              />
+              <button
+                type="button"
+                id="result-apply-threshold-btn"
+                onClick={() => handleApplyManualThreshold()}
+                disabled={isProcessing}
+                className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold shadow-xs transition-colors whitespace-nowrap"
+              >
+                {isProcessing ? '重算中...' : '应用重算'}
+              </button>
+            </div>
+
+            {/* Quick Presets */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] text-amber-800 font-medium">预设:</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setLocalManualThreshold(110);
+                  handleApplyManualThreshold(110);
+                }}
+                className="px-2 py-0.5 rounded bg-white hover:bg-amber-100 text-[10px] font-medium text-stone-700 border border-amber-200"
+              >
+                淡墨 110
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLocalManualThreshold(140);
+                  handleApplyManualThreshold(140);
+                }}
+                className="px-2 py-0.5 rounded bg-white hover:bg-amber-100 text-[10px] font-medium text-stone-700 border border-amber-200"
+              >
+                标准 140
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLocalManualThreshold(170);
+                  handleApplyManualThreshold(170);
+                }}
+                className="px-2 py-0.5 rounded bg-white hover:bg-amber-100 text-[10px] font-medium text-stone-700 border border-amber-200"
+              >
+                浓墨 170
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="pt-2 border-t border-stone-100 flex items-center justify-between text-xs text-stone-500">
+            <span className="flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+              当前启用高斯自适应算法：自动应对拍照阴影与纸张漫反射，如需直接固定墨水深浅可切换为【手动指定阈值】。
+            </span>
+          </div>
+        )}
+        {/* Unified Chroma Filter Sensitivity (0-100) Row */}
+        <div className="pt-3 border-t border-stone-100 space-y-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 rounded-md bg-stone-100 text-amber-600 flex items-center justify-center">
+                <Palette className="w-3 h-3" />
+              </div>
+              <span className="text-xs font-bold text-stone-900">
+                色度过滤灵敏度 (Chroma Filter Sensitivity):
+              </span>
+              <span className="font-mono text-xs font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 shadow-xs">
+                {localChromaSensitivity === 0
+                  ? '0% (已关闭 / 标准灰度)'
+                  : `${localChromaSensitivity}% (${
+                      localChromaSensitivity <= 25
+                        ? '轻度除色'
+                        : localChromaSensitivity <= 50
+                        ? '标准除色'
+                        : localChromaSensitivity <= 75
+                        ? '强力除色'
+                        : '极致除色'
+                    })`}
+              </span>
+            </div>
+
+            <span className="text-[11px] font-medium text-stone-500">
+              {localChromaSensitivity === 0
+                ? '关闭色度过滤：保留彩色痕迹，按标准亮度进行灰度与二值化转换'
+                : localChromaSensitivity <= 25
+                ? '轻度过滤：仅消除高饱和度鲜艳红印与蓝色参考线'
+                : localChromaSensitivity <= 50
+                ? '标准过滤：自动消除米字格、红色界格、印泥印章与扫描彩色杂斑'
+                : localChromaSensitivity <= 75
+                ? '强力过滤：深度消除暗红底线、陈旧泛黄纸斑、深色彩印方格'
+                : '极致过滤：全域激进过滤任何偏色痕迹，仅精准保留纯黑中性墨迹'}
+            </span>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 bg-amber-50/40 p-3 rounded-xl border border-amber-200/70">
+            <div className="flex-1 flex items-center gap-3">
+              <input
+                id="result-chroma-sensitivity-slider"
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                value={localChromaSensitivity}
+                onChange={(e) => handleChromaSensitivityChange(Number(e.target.value))}
+                onMouseUp={() => handleApplyChromaSensitivity()}
+                onTouchEnd={() => handleApplyChromaSensitivity()}
+                className="w-full accent-amber-500"
+              />
+              <button
+                type="button"
+                id="result-apply-chroma-btn"
+                onClick={() => handleApplyChromaSensitivity()}
+                disabled={isProcessing}
+                className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold shadow-xs transition-colors whitespace-nowrap"
+              >
+                {isProcessing ? '重算中...' : '应用色度过滤'}
+              </button>
+            </div>
+
+            {/* Presets */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] text-stone-500 font-medium">灵敏度预设:</span>
+              {[
+                { label: '关闭 (0%)', val: 0 },
+                { label: '轻度 (25%)', val: 25 },
+                { label: '标准 (50%)', val: 50 },
+                { label: '强力 (75%)', val: 75 },
+                { label: '极致 (95%)', val: 95 },
+              ].map((preset) => (
+                <button
+                  key={preset.val}
+                  type="button"
+                  onClick={() => {
+                    setLocalChromaSensitivity(preset.val);
+                    handleApplyChromaSensitivity(preset.val);
+                  }}
+                  className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                    localChromaSensitivity === preset.val
+                      ? 'bg-amber-500 text-white border-amber-500 font-bold'
+                      : 'bg-white hover:bg-amber-100/60 text-stone-700 border-amber-200/80'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Small Noise / Speckle Removal Threshold Slider Row */}
+        <div className="pt-3 border-t border-stone-100 space-y-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 rounded-md bg-stone-100 text-amber-600 flex items-center justify-center">
+                <Sparkles className="w-3 h-3" />
+              </div>
+              <span className="text-xs font-bold text-stone-900">
+                小噪点去除阈值 (Small Noise / Speckle Filter):
+              </span>
+              <span className="font-mono text-xs font-bold text-stone-900 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 shadow-xs">
+                {localMinNoiseArea === 0 ? '已关闭 (0 px)' : `${localMinNoiseArea} 像素`}
+              </span>
+            </div>
+
+            <span className="text-[11px] font-medium text-stone-500">
+              {localMinNoiseArea === 0
+                ? '关闭降噪：保留所有单点像素与微小笔触'
+                : localMinNoiseArea <= 6
+                ? '轻度去杂：仅清除极微小的扫描浮尘与孤立单像素'
+                : localMinNoiseArea <= 15
+                ? '标准去噪：清除纸张纤维杂质、微小污点，完好保护笔锋'
+                : localMinNoiseArea <= 30
+                ? '强力去尘：清除明显墨滴溅射、纸张破损点与灰尘团'
+                : '深度净化：强力消除较大杂斑，仅保留主干笔画'}
+            </span>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 bg-stone-50/70 p-3 rounded-xl border border-stone-200/80">
+            <div className="flex-1 flex items-center gap-3">
+              <input
+                id="result-noise-threshold-slider"
+                type="range"
+                min="0"
+                max="50"
+                step="1"
+                value={localMinNoiseArea}
+                onChange={(e) => handleMinNoiseAreaChange(Number(e.target.value))}
+                onMouseUp={() => handleApplyMinNoiseArea()}
+                onTouchEnd={() => handleApplyMinNoiseArea()}
+                className="w-full accent-amber-500"
+              />
+              <button
+                type="button"
+                id="result-apply-noise-btn"
+                onClick={() => handleApplyMinNoiseArea()}
+                disabled={isProcessing}
+                className="px-3 py-1 bg-stone-900 hover:bg-stone-800 text-white rounded-lg text-xs font-bold shadow-xs transition-colors whitespace-nowrap"
+              >
+                {isProcessing ? '重算中...' : '应用降噪'}
+              </button>
+            </div>
+
+            {/* Noise Presets */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[10px] text-stone-500 font-medium">降噪预设:</span>
+              {[
+                { label: '关闭 0px', val: 0 },
+                { label: '轻微 5px', val: 5 },
+                { label: '推荐 10px', val: 10 },
+                { label: '强力 20px', val: 20 },
+                { label: '深度 35px', val: 35 },
+              ].map((preset) => (
+                <button
+                  key={preset.val}
+                  type="button"
+                  onClick={() => {
+                    setLocalMinNoiseArea(preset.val);
+                    handleApplyMinNoiseArea(preset.val);
+                  }}
+                  className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                    localMinNoiseArea === preset.val
+                      ? 'bg-stone-900 text-white border-stone-900 font-bold'
+                      : 'bg-white hover:bg-stone-100 text-stone-700 border-stone-200'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Morphological Erosion - Dilation & Stroke Boldness Row */}
+        <div className="pt-3 border-t border-stone-100 space-y-2">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-5 rounded-md bg-stone-100 text-amber-600 flex items-center justify-center">
+                <Minimize2 className="w-3 h-3" />
+              </div>
+              <span className="text-xs font-bold text-stone-900">
+                侵蚀 - 扩张 (形态学笔画粗细微调):
+              </span>
+              <span className="font-mono text-xs font-bold text-stone-900 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 shadow-xs">
+                {localMorphMode === 'none'
+                  ? '原始笔画 (无形态学处理)'
+                  : localMorphMode === 'erode'
+                  ? `侵蚀细化 -${localMorphStrength} px`
+                  : localMorphMode === 'dilate'
+                  ? `膨胀加粗 +${localMorphStrength} px`
+                  : localMorphMode === 'open'
+                  ? `开运算 (平滑去刺) ${localMorphStrength} px`
+                  : `闭运算 (修补微裂) ${localMorphStrength} px`}
+              </span>
+            </div>
+
+            <span className="text-[11px] font-medium text-stone-500">
+              {localMorphMode === 'none'
+                ? '保持手写笔画原始粗细与边缘质感'
+                : localMorphMode === 'erode'
+                ? '剥离边缘轮廓，细化笔触，消除笔画粘连与渗墨毛边'
+                : localMorphMode === 'dilate'
+                ? '向外扩展轮廓，加粗笔画，增强浅淡笔迹并连接微小断笔'
+                : localMorphMode === 'open'
+                ? '先侵蚀后膨胀：消除边缘孤立细小毛刺，保持笔画粗细'
+                : '先膨胀后侵蚀：弥合断墨微孔与反光缝隙，保持笔画粗细'}
+            </span>
+          </div>
+
+          <div className="bg-stone-50/70 p-3 rounded-xl border border-stone-200/80 space-y-3">
+            {/* Mode selection buttons */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1 text-xs">
+                <span className="text-stone-600 font-medium mr-1 text-[11px]">处理模式:</span>
+                <div className="inline-flex bg-white p-0.5 rounded-lg border border-stone-200 text-[11px] shadow-2xs flex-wrap">
+                  {(
+                    [
+                      { id: 'none', label: '无 (原始)' },
+                      { id: 'erode', label: '侵蚀 (细化/收缩)' },
+                      { id: 'dilate', label: '膨胀 (加粗/扩张)' },
+                      { id: 'open', label: '开运算 (去毛刺)' },
+                      { id: 'close', label: '闭运算 (修补裂隙)' },
+                    ] as const
+                  ).map((m) => {
+                    const isActive = localMorphMode === m.id;
+                    return (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => handleMorphModeChange(m.id)}
+                        disabled={isProcessing}
+                        className={`px-2.5 py-1 rounded-md font-medium transition-all ${
+                          isActive
+                            ? 'bg-amber-500 text-white font-bold shadow-xs'
+                            : 'text-stone-600 hover:text-stone-900 hover:bg-stone-100'
+                        }`}
+                      >
+                        {m.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Quick Presets */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] text-stone-500 font-medium">快捷笔触:</span>
+                {[
+                  { label: '原始', mode: 'none' as const, strength: 1 },
+                  { label: '微细化 -1px', mode: 'erode' as const, strength: 1 },
+                  { label: '中细化 -2px', mode: 'erode' as const, strength: 2 },
+                  { label: '强细化 -3px', mode: 'erode' as const, strength: 3 },
+                  { label: '微加粗 +1px', mode: 'dilate' as const, strength: 1 },
+                  { label: '中加粗 +2px', mode: 'dilate' as const, strength: 2 },
+                  { label: '强加粗 +3px', mode: 'dilate' as const, strength: 3 },
+                  { label: '去刺平滑', mode: 'open' as const, strength: 1 },
+                  { label: '断笔修补', mode: 'close' as const, strength: 1 },
+                ].map((p) => {
+                  const isCur =
+                    localMorphMode === p.mode &&
+                    (p.mode === 'none' || localMorphStrength === p.strength);
+                  return (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => handleQuickMorphPreset(p.mode, p.strength)}
+                      disabled={isProcessing}
+                      className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+                        isCur
+                          ? 'bg-stone-900 text-white border-stone-900 font-bold'
+                          : 'bg-white hover:bg-stone-100 text-stone-700 border-stone-200'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Strength Slider (Visible when mode is not 'none') */}
+            {localMorphMode !== 'none' && (
+              <div className="pt-2 border-t border-stone-200/60 flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="flex items-center gap-2 min-w-[150px]">
+                  <span className="text-xs font-bold text-stone-800">
+                    形态学运算半径 / 强度:
+                  </span>
+                  <span className="font-mono text-xs font-bold text-amber-700 bg-white px-2 py-0.5 rounded border border-amber-300 shadow-2xs">
+                    {localMorphStrength} px ({
+                      localMorphStrength === 1
+                        ? '微调 0.04mm'
+                        : localMorphStrength === 2
+                        ? '轻度 0.08mm'
+                        : localMorphStrength === 3
+                        ? '中度 0.13mm'
+                        : localMorphStrength <= 4
+                        ? '较强 0.17mm'
+                        : '强力 0.25mm'
+                    })
+                  </span>
+                </div>
+
+                <div className="flex-1 flex items-center gap-3">
+                  <input
+                    id="result-morph-strength-slider"
+                    type="range"
+                    min="1"
+                    max="6"
+                    step="1"
+                    value={localMorphStrength}
+                    onChange={(e) => handleMorphStrengthChange(Number(e.target.value))}
+                    onMouseUp={() => handleApplyMorphStrength()}
+                    onTouchEnd={() => handleApplyMorphStrength()}
+                    className="w-full accent-amber-500"
+                  />
+                  <button
+                    type="button"
+                    id="result-apply-morph-btn"
+                    onClick={() => handleApplyMorphStrength()}
+                    disabled={isProcessing}
+                    className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold shadow-xs transition-colors whitespace-nowrap"
+                  >
+                    {isProcessing ? '重算中...' : '应用运算'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

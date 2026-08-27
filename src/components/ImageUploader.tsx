@@ -1,5 +1,5 @@
-import React, { useRef, useState } from 'react';
-import { Upload, Camera, Sparkles, Image as ImageIcon, CheckCircle, ArrowRight, ShieldCheck } from 'lucide-react';
+import React, { useRef, useState, useEffect } from 'react';
+import { Upload, Camera, Sparkles, Clipboard, ArrowRight, ShieldCheck } from 'lucide-react';
 import { PRESET_SCENARIOS, generatePresetImage } from '../utils/presetGenerators';
 
 interface ImageUploaderProps {
@@ -64,6 +64,66 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
     origImg.src = dataUrl;
   };
 
+  // Support global Ctrl+V / Command+V image pasting
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.type.indexOf('image') !== -1) {
+          const file = item.getAsFile();
+          if (file) {
+            e.preventDefault();
+            setIsLoadingPresets(true);
+            const reader = new FileReader();
+            reader.onload = (event) => {
+              const dataUrl = event.target?.result as string;
+              if (dataUrl) {
+                processLoadedImage(dataUrl);
+              }
+            };
+            reader.readAsDataURL(file);
+            return;
+          }
+        }
+      }
+    };
+
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+  }, []);
+
+  const handleClipboardButtonClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      if (navigator.clipboard && navigator.clipboard.read) {
+        const clipboardItems = await navigator.clipboard.read();
+        for (const item of clipboardItems) {
+          const imageType = item.types.find((t) => t.startsWith('image/'));
+          if (imageType) {
+            const blob = await item.getType(imageType);
+            setIsLoadingPresets(true);
+            const reader = new FileReader();
+            reader.onload = (event) => {
+              const dataUrl = event.target?.result as string;
+              if (dataUrl) {
+                processLoadedImage(dataUrl);
+              }
+            };
+            reader.readAsDataURL(blob);
+            return;
+          }
+        }
+      }
+      // If no image in clipboard items or restricted, provide friendly hint
+      alert('请使用截图快捷键 (Win+Shift+S 或 ⌘+Shift+4) 截取图片，然后直接按 Ctrl + V (或 ⌘ + V) 即可粘贴到此处！');
+    } catch {
+      alert('已就绪：请直接按下键盘 Ctrl + V (或 ⌘ + V) 粘贴剪贴板图片！');
+    }
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -122,7 +182,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
               导入手写纸张照片
             </h2>
             <p className="text-sm text-stone-300 max-w-xl leading-relaxed">
-              支持直接拍摄或相册选择。针对纸张微卷、手机阴影、粗糙手绘边框，系统将通过 8 点阶梯网格分段透视与自适应二值化算法，秒级提取透明背景素材。
+              支持直接拍摄、相册上传或 <strong>Ctrl + V 剪贴板快速粘贴</strong>。针对纸张微卷、手机阴影、彩色米字格/红印与粗糙手绘框线，系统秒级提取透明背景素材。
             </p>
           </div>
         </div>
@@ -167,19 +227,28 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
           </div>
 
           <h3 className="text-base font-semibold text-stone-900 mb-1">
-            选择本地照片或拖拽至此
+            选择本地照片、拖拽或按 Ctrl + V 粘贴
           </h3>
           <p className="text-xs text-stone-500 mb-5 max-w-xs">
-            支持 JPG、PNG、HEIC。原图将在本地浏览器内存中处理，保护隐私。
+            支持 JPG、PNG、HEIC 及微信/QQ/剪贴板截图。原图在本地浏览器内存中即时处理。
           </p>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-center gap-2.5">
             <button
               id="upload-browse-btn"
               type="button"
-              className="px-4 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors"
+              className="px-3.5 py-2 bg-stone-900 hover:bg-stone-800 text-white rounded-xl text-xs font-semibold shadow-xs transition-colors"
             >
               浏览相册
+            </button>
+            <button
+              id="upload-paste-btn"
+              type="button"
+              onClick={handleClipboardButtonClick}
+              className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/80 rounded-xl text-xs font-semibold transition-colors inline-flex items-center gap-1.5"
+            >
+              <Clipboard className="w-3.5 h-3.5 text-amber-700" />
+              粘贴图像 (Ctrl+V)
             </button>
             <button
               id="upload-camera-btn"
@@ -188,10 +257,10 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
                 e.stopPropagation();
                 cameraInputRef.current?.click();
               }}
-              className="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-stone-800 rounded-xl text-xs font-semibold transition-colors inline-flex items-center gap-1.5 border border-stone-200"
+              className="px-3.5 py-2 bg-stone-100 hover:bg-stone-200 text-stone-800 rounded-xl text-xs font-semibold transition-colors inline-flex items-center gap-1.5 border border-stone-200"
             >
               <Camera className="w-3.5 h-3.5" />
-              拍照上传
+              拍照
             </button>
           </div>
         </div>
@@ -243,8 +312,8 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
           </div>
 
           <div className="mt-4 pt-3 border-t border-stone-100 flex items-center justify-between text-[11px] text-stone-400">
-            <span>支持 WebAssembly & Web Worker</span>
-            <span>无服务器上载 · 零延迟</span>
+            <span>支持 Web Worker 多线程计算</span>
+            <span>剪贴板直粘 · 零等待</span>
           </div>
         </div>
       </div>

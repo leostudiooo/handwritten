@@ -41,12 +41,13 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
           <div className="border border-stone-200 rounded-xl p-3.5 bg-stone-50/50">
             <h4 className="font-bold text-stone-900 mb-1.5 flex items-center gap-1.5">
               <Grid className="w-4 h-4 text-amber-600" />
-              1. 8 点阶梯网格联动与放大镜微调 (Section 3.2)
+              1. 四角驱动等分与中间点微调 (Section 3.2)
             </h4>
             <p className="text-[11px] leading-relaxed text-stone-600">
-              纸张由于卷曲或透视会产生非均匀畸变。8 点网格分为 3 个连体矩形，其中 <strong>P2、P3</strong> 和 <strong>P4、P5</strong> 为相邻行的共用锚点。移动任一共用锚点，上下两行无缝联动。
+              <strong>第一步</strong>：优先调整 4 个最外角点（<strong>P0, P1, P6, P7</strong>），系统自动按 1/3 与 2/3 线性带算中间点；
+              <strong>第二步</strong>：如有纸张卷曲或格子高矮不一，再直接拖拽或方向键微调中间共用点（<strong>P2/P3, P4/P5</strong>）。
               <br />
-              <span className="text-amber-700 font-semibold">移动端优化：</span> 拖拽锚点时，上方 50px 自动弹出 2× 放大镜与十字准星，彻底解决手指遮挡视线问题。
+              <span className="text-amber-700 font-semibold">精准微调：</span> 拖拽任意锚点时，上方自动弹出 2.4× 高清放大镜与十字准星，支持方向键 1px 级微调。
             </p>
           </div>
 
@@ -66,10 +67,12 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
           <div className="border border-stone-200 rounded-xl p-3.5 bg-stone-50/50">
             <h4 className="font-bold text-stone-900 mb-1.5 flex items-center gap-1.5">
               <ShieldCheck className="w-4 h-4 text-emerald-600" />
-              3. 高斯自适应除影与空行过滤 (Section 3.4 & 3.5)
+              3. 二值化除影（自适应/手动阈值）与空行过滤 (Section 3.4 & 3.5)
             </h4>
             <p className="text-[11px] leading-relaxed text-stone-600">
-              采用高斯积分自适应二值化算法，动态计算局部灰度均值，彻底剔除手机俯拍产生的大面积倾斜阴影。
+              默认采用<strong>高斯积分自适应二值化</strong>算法，动态计算局部灰度均值，彻底消除手机俯拍产生的倾斜阴影；
+              同时支持<strong>手动指定全局灰度阈值</strong>（0~255），方便精细控制墨迹深浅与干枯断笔。
+              <br />
               若字迹像素占比低于 0.3%（容错阈值），判定为空行并自动丢弃，不输出多余图片。
             </p>
           </div>
@@ -78,10 +81,10 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
           <div className="border border-stone-200 rounded-xl p-3.5 bg-stone-50/50">
             <h4 className="font-bold text-stone-900 mb-1.5 flex items-center gap-1.5">
               <CheckCircle className="w-4 h-4 text-cyan-600" />
-              4. 300 PPI 标准透明 PNG 导出 (Section 3.6)
+              4. 600 DPI / 300 DPI 超清透明 PNG 导出 (Section 3.6)
             </h4>
             <p className="text-[11px] leading-relaxed text-stone-600">
-              字迹居中缩放至标准尺寸（100mm × 20mm 对应 1182 × 236 px），白色背景转换为 100% 透明 Alpha 通道，支持单张下载、复制图像与批量 ZIP 打包。
+              字迹居中缩放至超清出版级 600 DPI（100mm × 20mm 对应 2364 × 472 px）或 300 DPI 规格，白色背景转换为 100% 透明 Alpha 通道，支持单张下载、复制图像与批量 ZIP 打包。结合 600 DPI 高密度像素，形态学侵蚀/加粗支持亚毫米级（0.04mm）极致微调。
             </p>
           </div>
         </div>

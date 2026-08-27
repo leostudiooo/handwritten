@@ -50,62 +50,32 @@ export function generatePresetImage(scenarioId: string): Promise<string> {
     canvas.height = height;
     const ctx = canvas.getContext('2d')!;
 
-    // 1. Desk/Wood Background
-    const deskGrad = ctx.createLinearGradient(0, 0, width, height);
-    deskGrad.addColorStop(0, '#d1c4b2');
-    deskGrad.addColorStop(0.5, '#c7b7a3');
-    deskGrad.addColorStop(1, '#bba792');
-    ctx.fillStyle = deskGrad;
+    // 1. Pure White / Fine Grain Paper fills the entire frame (no desk/table background)
+    // Soft paper off-white base
+    ctx.fillStyle = '#faf8f5';
     ctx.fillRect(0, 0, width, height);
 
-    // Subtle desk woodgrain texture
-    ctx.strokeStyle = 'rgba(120, 90, 60, 0.08)';
-    ctx.lineWidth = 1.5;
-    for (let y = 0; y < height; y += 16) {
-      ctx.beginPath();
-      ctx.moveTo(0, y + (Math.sin(y * 0.05) * 4));
-      ctx.bezierCurveTo(
-        width * 0.3, y + Math.cos(y * 0.03) * 8,
-        width * 0.7, y - Math.sin(y * 0.04) * 6,
-        width, y + Math.cos(y * 0.02) * 5
-      );
-      ctx.stroke();
-    }
-
-    // 2. Paper Position with 3-D Perspective tilt
-    ctx.save();
-    ctx.translate(width / 2, height / 2);
-    // Slight angle tilt
-    const tiltAngle = scenarioId === 'paper_curl' ? 0.03 : -0.02;
-    ctx.rotate(tiltAngle);
-
-    const paperW = 900;
-    const paperH = 750;
-
-    // Paper Drop Shadow
-    ctx.shadowColor = 'rgba(40, 30, 20, 0.35)';
-    ctx.shadowBlur = 30;
-    ctx.shadowOffsetX = 12;
-    ctx.shadowOffsetY = 18;
-
-    // Paper Background
-    ctx.fillStyle = '#faf8f5';
-    ctx.fillRect(-paperW / 2, -paperH / 2, paperW, paperH);
-
-    // Reset shadow
-    ctx.shadowColor = 'transparent';
-
-    // Paper texture noise
+    // Fine paper fiber texture noise across canvas
     ctx.fillStyle = 'rgba(0, 0, 0, 0.015)';
-    for (let i = 0; i < 4000; i++) {
-      const px = -paperW / 2 + Math.random() * paperW;
-      const py = -paperH / 2 + Math.random() * paperH;
+    for (let i = 0; i < 7000; i++) {
+      const px = Math.random() * width;
+      const py = Math.random() * height;
       ctx.fillRect(px, py, 1.5, 1.5);
     }
 
+    // 2. Paper Position with slight natural paper curl / perspective if testing curl
+    ctx.save();
+    ctx.translate(width / 2, height / 2);
+    // Slight angle tilt only for curl scenario
+    const tiltAngle = scenarioId === 'paper_curl' ? 0.025 : 0;
+    if (tiltAngle !== 0) {
+      ctx.rotate(tiltAngle);
+    }
+
     // 3. Draw 3 Contiguous Hand-drawn Rectangular Boxes (100mm x 20mm each, 100mm x 60mm total)
-    const boxW = 680;
-    const boxH = 140; // total 3 * 140 = 420
+    // Centered cleanly on the paper with generous margins
+    const boxW = 1080;
+    const boxH = 220; // total 3 * 220 = 660 px
     const startX = -boxW / 2;
     const startY = - (boxH * 3) / 2;
 
@@ -120,21 +90,21 @@ export function generatePresetImage(scenarioId: string): Promise<string> {
       if (isCurl) {
         // Middle row bulges outward and wider
         if (row === 1 || row === 2) {
-          y += (col === 0 ? -12 : 12);
-          if (row === 1) y -= 16;
-          if (row === 2) y += 14;
+          y += (col === 0 ? -18 : 18);
+          if (row === 1) y -= 24;
+          if (row === 2) y += 22;
         }
       }
       if (isRough) {
-        x += (Math.random() - 0.5) * 6;
-        y += (Math.random() - 0.5) * 5;
+        x += (Math.random() - 0.5) * 8;
+        y += (Math.random() - 0.5) * 6;
       }
       return { x, y };
     };
 
     // Draw Box Outlines (Ink pen / ballpoint pen simulation)
     ctx.strokeStyle = '#22252a';
-    ctx.lineWidth = isRough ? 4.5 : 2.5;
+    ctx.lineWidth = isRough ? 5.5 : 3.5;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
@@ -164,16 +134,16 @@ export function generatePresetImage(scenarioId: string): Promise<string> {
       if (isRough) {
         ctx.fillStyle = 'rgba(30, 35, 40, 0.4)';
         ctx.beginPath();
-        ctx.arc(tl.x + 4, tl.y + 4, 3, 0, Math.PI * 2);
-        ctx.arc(tr.x - 5, tr.y + 3, 4, 0, Math.PI * 2);
-        ctx.arc(bl.x + 3, bl.y - 4, 3.5, 0, Math.PI * 2);
+        ctx.arc(tl.x + 5, tl.y + 5, 4, 0, Math.PI * 2);
+        ctx.arc(tr.x - 6, tr.y + 4, 5, 0, Math.PI * 2);
+        ctx.arc(bl.x + 4, bl.y - 5, 4.5, 0, Math.PI * 2);
         ctx.fill();
       }
 
       // Small printed box dimension label in corner outside or light watermark
-      ctx.fillStyle = 'rgba(160, 160, 160, 0.5)';
-      ctx.font = '12px sans-serif';
-      ctx.fillText(`BOX ${r + 1} (100mm×20mm)`, tl.x + 10, tl.y - 6);
+      ctx.fillStyle = 'rgba(150, 150, 150, 0.6)';
+      ctx.font = '14px sans-serif';
+      ctx.fillText(`BOX ${r + 1} (100mm×20mm)`, tl.x + 14, tl.y - 8);
     }
 
     // 4. Draw Handwriting inside boxes
@@ -181,9 +151,9 @@ export function generatePresetImage(scenarioId: string): Promise<string> {
     drawHandwrittenText(
       ctx,
       '春风得意马蹄疾，一日看尽长安花。',
-      startX + 40,
-      startY + 85,
-      isCurl ? 0.04 : 0
+      startX + 60,
+      startY + 130,
+      isCurl ? 0.035 : 0
     );
 
     // Row 2 Text (Empty if scenario is 'empty_row')
@@ -191,9 +161,9 @@ export function generatePresetImage(scenarioId: string): Promise<string> {
       drawHandwrittenText(
         ctx,
         'Standardizing Handwritten Notes 2026',
-        startX + 50,
-        startY + boxH + 85,
-        isCurl ? -0.03 : 0
+        startX + 80,
+        startY + boxH + 130,
+        isCurl ? -0.025 : 0
       );
     }
 
@@ -201,42 +171,47 @@ export function generatePresetImage(scenarioId: string): Promise<string> {
     drawHandwrittenText(
       ctx,
       '工欲善其事，必先利其器。Hello World!',
-      startX + 40,
-      startY + boxH * 2 + 85,
+      startX + 60,
+      startY + boxH * 2 + 130,
       isCurl ? 0.02 : 0
     );
 
     // 5. Environmental Lighting & Phone Shadow Effects
     if (scenarioId === 'phone_shadow') {
-      // Strong harsh phone silhouette shadow diagonally covering right and bottom
+      // Soft continuous cast shadow (e.g. hand/phone overhead light block)
+      // Uses a continuous linear-radial penumbra gradient so it doesn't create artificial sharp step edges
       const shadowGrad = ctx.createLinearGradient(
-        -paperW * 0.4, -paperH * 0.4,
-        paperW * 0.5, paperH * 0.5
+        -width * 0.35, -height * 0.35,
+        width * 0.45, height * 0.45
       );
       shadowGrad.addColorStop(0, 'rgba(0, 0, 0, 0.0)');
-      shadowGrad.addColorStop(0.35, 'rgba(0, 0, 0, 0.15)');
-      shadowGrad.addColorStop(0.55, 'rgba(15, 20, 30, 0.65)');
-      shadowGrad.addColorStop(1, 'rgba(10, 15, 25, 0.82)');
+      shadowGrad.addColorStop(0.3, 'rgba(10, 15, 25, 0.12)');
+      shadowGrad.addColorStop(0.6, 'rgba(15, 20, 30, 0.45)');
+      shadowGrad.addColorStop(1, 'rgba(15, 20, 30, 0.68)');
 
       ctx.fillStyle = shadowGrad;
-      ctx.fillRect(-paperW / 2, -paperH / 2, paperW, paperH);
+      ctx.fillRect(-width / 2, -height / 2, width, height);
 
-      // Phone silhouette head shadow
-      ctx.fillStyle = 'rgba(10, 15, 25, 0.4)';
+      // Soft diffuse phone silhouette
+      const phoneGrad = ctx.createRadialGradient(120, 180, 40, 120, 180, 380);
+      phoneGrad.addColorStop(0, 'rgba(10, 15, 25, 0.35)');
+      phoneGrad.addColorStop(0.7, 'rgba(10, 15, 25, 0.15)');
+      phoneGrad.addColorStop(1, 'rgba(10, 15, 25, 0.0)');
+      ctx.fillStyle = phoneGrad;
       ctx.beginPath();
-      ctx.ellipse(100, 150, 220, 320, Math.PI / 4, 0, Math.PI * 2);
+      ctx.ellipse(120, 180, 320, 240, Math.PI / 5, 0, Math.PI * 2);
       ctx.fill();
     } else {
-      // Mild natural ambient gradient
+      // Very mild subtle ambient gradient
       const ambientGrad = ctx.createLinearGradient(
-        -paperW / 2, -paperH / 2,
-        paperW / 2, paperH / 2
+        -width / 2, -height / 2,
+        width / 2, height / 2
       );
-      ambientGrad.addColorStop(0, 'rgba(255, 255, 255, 0.15)');
-      ambientGrad.addColorStop(0.6, 'rgba(0, 0, 0, 0.0)');
-      ambientGrad.addColorStop(1, 'rgba(0, 0, 0, 0.18)');
+      ambientGrad.addColorStop(0, 'rgba(255, 255, 255, 0.12)');
+      ambientGrad.addColorStop(0.5, 'rgba(0, 0, 0, 0.0)');
+      ambientGrad.addColorStop(1, 'rgba(0, 0, 0, 0.08)');
       ctx.fillStyle = ambientGrad;
-      ctx.fillRect(-paperW / 2, -paperH / 2, paperW, paperH);
+      ctx.fillRect(-width / 2, -height / 2, width, height);
     }
 
     ctx.restore();
