@@ -530,7 +530,7 @@ export function processBoxImage(
   const rawW = warpedImageData.width;
   const rawH = warpedImageData.height;
 
-  // 1. Binarization: Adaptive vs Manual Thresholding with Unified Chroma Filter (0-100)
+  // 1. Binarization: Manual Thresholding with Unified Chroma Filter (0-100)
   const chromaSens =
     config.chromaSensitivity !== undefined
       ? config.chromaSensitivity
@@ -538,19 +538,12 @@ export function processBoxImage(
       ? 50
       : 0;
 
-  const binary =
-    config.thresholdMode === 'manual'
-      ? manualThreshold(
-          warpedImageData,
-          config.manualThreshold ?? 140,
-          chromaSens
-        )
-      : adaptiveThresholdFast(
-          warpedImageData,
-          config.adaptiveBlockSize,
-          config.adaptiveC,
-          chromaSens
-        );
+  const thresholdVal = config.manualThreshold ?? 140;
+  const binary = manualThreshold(
+    warpedImageData,
+    thresholdVal,
+    chromaSens
+  );
 
   // 2. Morphological Operations: Erosion / Dilation / Open / Close
   const morphBinary = applyMorphology(

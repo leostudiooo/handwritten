@@ -25,10 +25,7 @@ export interface ProcessingConfig {
   targetHeight: number;         // e.g. 472px (600 DPI @ 20mm) or 236px (300 DPI)
   paddingCutPercentX: number;   // default 5% (cuts 5% from left and right)
   paddingCutPercentY: number;   // default 5% (cuts 5% from top and bottom)
-  thresholdMode: 'adaptive' | 'manual'; // 'adaptive' (Gaussian local mean) or 'manual' (global grayscale cutoff)
-  manualThreshold: number;      // default 140 (0-255)
-  adaptiveBlockSize: number;    // default 51 (odd number 31-101)
-  adaptiveC: number;            // default 8 (5-20)
+  manualThreshold: number;      // default 140 (0-255 manual grayscale cutoff)
   enableMorphClose: boolean;    // default true (kernel repair)
   morphMode?: MorphMode;        // default 'none' | 'erode' | 'dilate' | 'open' | 'close'
   morphStrength?: number;       // default 1 (kernel radius 1-6 px for high-res 600 DPI fine tuning)
@@ -37,6 +34,9 @@ export interface ProcessingConfig {
   invertResult: boolean;        // default false (true for white text on dark)
   inkColor: string;             // default '#000000'
   chromaSensitivity?: number;   // default 50 (0-100: 0 = off, 1-100 = sensitivity for filtering red/blue/colored guidelines & stamps)
+  thresholdMode?: 'manual' | 'adaptive'; // legacy compatibility
+  adaptiveBlockSize?: number;   // legacy compatibility
+  adaptiveC?: number;           // legacy compatibility
   chromaFilterMode?: string;    // legacy compatibility
   chromaThreshold?: number;     // legacy compatibility
   redSensitivity?: number;      // legacy compatibility
@@ -50,6 +50,8 @@ export interface ProcessedRow {
   totalPixelCount: number;
   inkDensityPercent: number;
   dataUrl: string;              // Standard transparent PNG data url
+  originalDataUrl?: string;     // Initial CV result before manual touch-up
+  isManuallyEdited?: boolean;   // Flag indicating manual eraser / touchup
   blob?: Blob;
   width: number;
   height: number;
