@@ -10,10 +10,8 @@ import {
   CheckCircle2,
   AlertCircle,
   Eye,
-  Layers,
   Sparkles,
   SlidersHorizontal,
-  Wand2,
   Minimize2,
   Maximize2,
   Palette,
@@ -44,7 +42,10 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
   const [copiedRowIdx, setCopiedRowIdx] = useState<number | null>(null);
   const [isZipping, setIsZipping] = useState(false);
   const [localManualThreshold, setLocalManualThreshold] = useState<number>(config.manualThreshold ?? 140);
-  const [localChromaSensitivity, setLocalChromaSensitivity] = useState<number>(config.chromaSensitivity ?? 50);
+  const [localChromaThreshold, setLocalChromaThreshold] = useState<number>(
+    config.chromaThresholdPercent ??
+      (config.chromaSensitivity !== undefined ? config.chromaSensitivity / 100 : 0.5)
+  );
   const [localMinNoiseArea, setLocalMinNoiseArea] = useState<number>(config.minNoiseArea ?? 8);
   const [localMorphMode, setLocalMorphMode] = useState<MorphMode>(
     config.morphMode ?? (config.enableMorphClose ? 'close' : 'none')
@@ -56,8 +57,11 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
   }, [config.manualThreshold]);
 
   useEffect(() => {
-    setLocalChromaSensitivity(config.chromaSensitivity ?? 50);
-  }, [config.chromaSensitivity]);
+    setLocalChromaThreshold(
+      config.chromaThresholdPercent ??
+        (config.chromaSensitivity !== undefined ? config.chromaSensitivity / 100 : 0.5)
+    );
+  }, [config.chromaThresholdPercent, config.chromaSensitivity]);
 
   useEffect(() => {
     setLocalMinNoiseArea(config.minNoiseArea ?? 8);
@@ -82,42 +86,32 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
     }
   }, [result.processedCount]);
 
-  // Handle Quick Threshold Mode Switch
-  const handleToggleThresholdMode = (mode: 'adaptive' | 'manual') => {
-    if (mode === config.thresholdMode) return;
-    const updated: ProcessingConfig = {
-      ...config,
-      thresholdMode: mode,
-      manualThreshold: localManualThreshold,
-    };
-    onUpdateConfigAndRerun(updated);
-  };
-
   // Handle Manual Threshold Slider change
   const handleManualThresholdChange = (val: number) => {
     setLocalManualThreshold(val);
   };
 
-  const handleApplyManualThreshold = (val?: number) => {
+  const handleApplyManualThreshold = (val?: number, source: 'auto' | 'manual' = 'manual') => {
     const targetVal = val !== undefined ? val : localManualThreshold;
     const updated: ProcessingConfig = {
       ...config,
       thresholdMode: 'manual',
       manualThreshold: targetVal,
+      thresholdSource: source,
     };
     onUpdateConfigAndRerun(updated);
   };
 
-  // Handle Chroma Sensitivity (0-100) Slider change & apply
-  const handleChromaSensitivityChange = (val: number) => {
-    setLocalChromaSensitivity(val);
+  // Handle Chroma Threshold (0-1%) Slider change & apply
+  const handleChromaThresholdChange = (val: number) => {
+    setLocalChromaThreshold(val);
   };
 
-  const handleApplyChromaSensitivity = (val?: number) => {
-    const targetVal = val !== undefined ? val : localChromaSensitivity;
+  const handleApplyChromaThreshold = (val?: number) => {
+    const targetVal = val !== undefined ? val : localChromaThreshold;
     const updated: ProcessingConfig = {
       ...config,
-      chromaSensitivity: targetVal,
+      chromaThresholdPercent: targetVal,
     };
     onUpdateConfigAndRerun(updated);
   };
@@ -201,7 +195,7 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
   const handleDownloadSingle = (row: ProcessedRow) => {
     const link = document.createElement('a');
     link.href = row.dataUrl;
-    const dpiTag = row.width >= 2000 ? '600dpi' : row.width >= 1100 ? '300dpi' : 'std';
+    const dpiTag = config.outputDpi ? `${config.outputDpi}dpi` : 'std';
     link.download = `handwriting_row_${row.rowIndex + 1}_${dpiTag}.png`;
     document.body.appendChild(link);
     link.click();
@@ -228,6 +222,7 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
         app: 'Semi-Automatic Handwriting Standardizer',
         totalRowsExtracted: validRows.length,
         originalDimensions: `${result.originalWidth}x${result.originalHeight}`,
+        outputDpi: config.outputDpi ?? null,
         timestamp: new Date().toISOString(),
         rows: validRows.map((r) => ({
           row: r.rowIndex + 1,
@@ -289,7 +284,7 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
             {result.skippedCount > 0 && ` (${result.skippedCount} 行空行已自动过滤)`}
           </h2>
           <p className="text-xs text-stone-500">
-            原图分辨率 {result.originalWidth} × {result.originalHeight} · {config.targetWidth >= 2000 ? '600 DPI 超清出版级' : config.targetWidth >= 1100 ? '300 DPI 印刷级' : '紧凑基准'} ({config.targetWidth} × {config.targetHeight} px) · 背景已转透明 Alpha
+            原图分辨率 {result.originalWidth} × {result.originalHeight} · {config.outputDpi ? `${config.outputDpi} DPI` : '紧凑基准'} ({config.targetWidth} × {config.targetHeight} px) · 背景已转透明 Alpha
           </p>
         </div>
 
@@ -341,46 +336,17 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
               <div className="text-xs font-bold text-stone-900 flex items-center gap-2">
                 <span>二值化阈值调控</span>
                 <span className="text-[10px] text-stone-400 font-normal">
-                  (当前: {config.thresholdMode === 'manual' ? `手动阈值 ${config.manualThreshold ?? 140}` : `自适应 B=${config.adaptiveBlockSize}, C=${config.adaptiveC}`})
+                  (当前: 手动阈值 {config.manualThreshold ?? 140}
+                  {config.autoThreshold !== undefined ? ` · CV 建议 ${config.autoThreshold}` : ''})
                 </span>
               </div>
               <p className="text-[11px] text-stone-500">
-                可实时在自适应算法与手动阈值间切换，精准微调墨迹深浅与背景纯净度
+                先用 CV 自动检测全局阈值作为默认值，再用滑块微调墨迹深浅与背景纯净度
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Mode Switcher */}
-            <div className="inline-flex bg-stone-100 p-0.5 rounded-xl border border-stone-200 text-xs">
-              <button
-                type="button"
-                id="result-toggle-adaptive-btn"
-                onClick={() => handleToggleThresholdMode('adaptive')}
-                disabled={isProcessing}
-                className={`px-3 py-1 rounded-lg font-medium transition-all ${
-                  config.thresholdMode !== 'manual'
-                    ? 'bg-white text-stone-900 shadow-xs font-bold'
-                    : 'text-stone-500 hover:text-stone-900'
-                }`}
-              >
-                自适应阈值
-              </button>
-              <button
-                type="button"
-                id="result-toggle-manual-btn"
-                onClick={() => handleToggleThresholdMode('manual')}
-                disabled={isProcessing}
-                className={`px-3 py-1 rounded-lg font-medium transition-all ${
-                  config.thresholdMode === 'manual'
-                    ? 'bg-white text-stone-900 shadow-xs font-bold'
-                    : 'text-stone-500 hover:text-stone-900'
-                }`}
-              >
-                手动指定阈值
-              </button>
-            </div>
-
             <button
               type="button"
               onClick={onOpenSettings}
@@ -392,84 +358,86 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
           </div>
         </div>
 
-        {/* Manual Threshold Slider Row (if in manual mode) */}
-        {config.thresholdMode === 'manual' ? (
-          <div className="pt-2 border-t border-stone-100 flex flex-col sm:flex-row sm:items-center gap-3 bg-amber-50/40 p-3 rounded-xl border border-amber-200/50">
-            <div className="flex items-center gap-2 min-w-[140px]">
-              <span className="text-xs font-bold text-amber-950">手动阈值:</span>
-              <span className="font-mono text-xs font-bold text-amber-900 bg-white px-2 py-0.5 rounded border border-amber-300 shadow-xs">
-                {localManualThreshold}
-              </span>
-            </div>
-
-            <div className="flex-1 flex items-center gap-3">
-              <input
-                id="result-manual-threshold-slider"
-                type="range"
-                min="30"
-                max="230"
-                step="1"
-                value={localManualThreshold}
-                onChange={(e) => handleManualThresholdChange(Number(e.target.value))}
-                onMouseUp={() => handleApplyManualThreshold()}
-                onTouchEnd={() => handleApplyManualThreshold()}
-                className="w-full accent-amber-600"
-              />
-              <button
-                type="button"
-                id="result-apply-threshold-btn"
-                onClick={() => handleApplyManualThreshold()}
-                disabled={isProcessing}
-                className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold shadow-xs transition-colors whitespace-nowrap"
-              >
-                {isProcessing ? '重算中...' : '应用重算'}
-              </button>
-            </div>
-
-            {/* Quick Presets */}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[10px] text-amber-800 font-medium">预设:</span>
-              <button
-                type="button"
-                onClick={() => {
-                  setLocalManualThreshold(110);
-                  handleApplyManualThreshold(110);
-                }}
-                className="px-2 py-0.5 rounded bg-white hover:bg-amber-100 text-[10px] font-medium text-stone-700 border border-amber-200"
-              >
-                淡墨 110
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setLocalManualThreshold(140);
-                  handleApplyManualThreshold(140);
-                }}
-                className="px-2 py-0.5 rounded bg-white hover:bg-amber-100 text-[10px] font-medium text-stone-700 border border-amber-200"
-              >
-                标准 140
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setLocalManualThreshold(170);
-                  handleApplyManualThreshold(170);
-                }}
-                className="px-2 py-0.5 rounded bg-white hover:bg-amber-100 text-[10px] font-medium text-stone-700 border border-amber-200"
-              >
-                浓墨 170
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="pt-2 border-t border-stone-100 flex items-center justify-between text-xs text-stone-500">
-            <span className="flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              当前启用高斯自适应算法：自动应对拍照阴影与纸张漫反射，如需直接固定墨水深浅可切换为【手动指定阈值】。
+        <div className="pt-2 border-t border-stone-100 flex flex-col sm:flex-row sm:items-center gap-3 bg-amber-50/40 p-3 rounded-xl border border-amber-200/50">
+          <div className="flex items-center gap-2 min-w-[140px]">
+            <span className="text-xs font-bold text-amber-950">手动阈值:</span>
+            <span className="font-mono text-xs font-bold text-amber-900 bg-white px-2 py-0.5 rounded border border-amber-300 shadow-xs">
+              {localManualThreshold}
             </span>
           </div>
-        )}
-        {/* Unified Chroma Filter Sensitivity (0-100) Row */}
+
+          <div className="flex-1 flex items-center gap-3">
+            <input
+              id="result-manual-threshold-slider"
+              type="range"
+              min="30"
+              max="230"
+              step="1"
+              value={localManualThreshold}
+              onChange={(e) => handleManualThresholdChange(Number(e.target.value))}
+              onMouseUp={() => handleApplyManualThreshold()}
+              onTouchEnd={() => handleApplyManualThreshold()}
+              className="w-full accent-amber-600"
+            />
+            <button
+              type="button"
+              id="result-apply-threshold-btn"
+              onClick={() => handleApplyManualThreshold()}
+              disabled={isProcessing}
+              className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold shadow-xs transition-colors whitespace-nowrap"
+            >
+              {isProcessing ? '重算中...' : '应用重算'}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] text-amber-800 font-medium">预设:</span>
+            {config.autoThreshold !== undefined && (
+              <button
+                type="button"
+                onClick={() => {
+                  const val = config.autoThreshold ?? 140;
+                  setLocalManualThreshold(val);
+                  handleApplyManualThreshold(val, 'auto');
+                }}
+                className="px-2 py-0.5 rounded bg-amber-500 hover:bg-amber-600 text-[10px] font-bold text-white border border-amber-500"
+              >
+                CV 建议 {config.autoThreshold}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setLocalManualThreshold(110);
+                handleApplyManualThreshold(110, 'manual');
+              }}
+              className="px-2 py-0.5 rounded bg-white hover:bg-amber-100 text-[10px] font-medium text-stone-700 border border-amber-200"
+            >
+              淡墨 110
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setLocalManualThreshold(140);
+                handleApplyManualThreshold(140, 'manual');
+              }}
+              className="px-2 py-0.5 rounded bg-white hover:bg-amber-100 text-[10px] font-medium text-stone-700 border border-amber-200"
+            >
+              标准 140
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setLocalManualThreshold(170);
+                handleApplyManualThreshold(170, 'manual');
+              }}
+              className="px-2 py-0.5 rounded bg-white hover:bg-amber-100 text-[10px] font-medium text-stone-700 border border-amber-200"
+            >
+              浓墨 170
+            </button>
+          </div>
+        </div>
+        {/* Unified Chroma Filter Threshold (0-1%) Row */}
         <div className="pt-3 border-t border-stone-100 space-y-2">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div className="flex items-center gap-2">
@@ -477,33 +445,25 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
                 <Palette className="w-3 h-3" />
               </div>
               <span className="text-xs font-bold text-stone-900">
-                色度过滤灵敏度 (Chroma Filter Sensitivity):
+                色度过滤阈值 (Chroma Delta):
               </span>
               <span className="font-mono text-xs font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 shadow-xs">
-                {localChromaSensitivity === 0
+                {localChromaThreshold === 0
                   ? '0% (已关闭 / 标准灰度)'
-                  : `${localChromaSensitivity}% (${
-                      localChromaSensitivity <= 25
-                        ? '轻度除色'
-                        : localChromaSensitivity <= 50
-                        ? '标准除色'
-                        : localChromaSensitivity <= 75
-                        ? '强力除色'
-                        : '极致除色'
-                    })`}
+                  : `${localChromaThreshold.toFixed(2)}%`}
               </span>
             </div>
 
             <span className="text-[11px] font-medium text-stone-500">
-              {localChromaSensitivity === 0
+              {localChromaThreshold === 0
                 ? '关闭色度过滤：保留彩色痕迹，按标准亮度进行灰度与二值化转换'
-                : localChromaSensitivity <= 25
-                ? '轻度过滤：仅消除高饱和度鲜艳红印与蓝色参考线'
-                : localChromaSensitivity <= 50
-                ? '标准过滤：自动消除米字格、红色界格、印泥印章与扫描彩色杂斑'
-                : localChromaSensitivity <= 75
-                ? '强力过滤：深度消除暗红底线、陈旧泛黄纸斑、深色彩印方格'
-                : '极致过滤：全域激进过滤任何偏色痕迹，仅精准保留纯黑中性墨迹'}
+                : localChromaThreshold <= 0.25
+                ? '激进过滤：极小色偏也会被视为彩色辅助线或纸斑'
+                : localChromaThreshold <= 0.5
+                ? '默认过滤：适合常见红蓝格线、印章色与轻微纸斑'
+                : localChromaThreshold <= 0.75
+                ? '温和过滤：允许少量通道偏差，减少误伤墨迹边缘'
+                : '最宽容过滤：只过滤更明显的色度差异'}
             </span>
           </div>
 
@@ -513,18 +473,18 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
                 id="result-chroma-sensitivity-slider"
                 type="range"
                 min="0"
-                max="100"
-                step="1"
-                value={localChromaSensitivity}
-                onChange={(e) => handleChromaSensitivityChange(Number(e.target.value))}
-                onMouseUp={() => handleApplyChromaSensitivity()}
-                onTouchEnd={() => handleApplyChromaSensitivity()}
+                max="1"
+                step="0.01"
+                value={localChromaThreshold}
+                onChange={(e) => handleChromaThresholdChange(Number(e.target.value))}
+                onMouseUp={() => handleApplyChromaThreshold()}
+                onTouchEnd={() => handleApplyChromaThreshold()}
                 className="w-full accent-amber-500"
               />
               <button
                 type="button"
                 id="result-apply-chroma-btn"
-                onClick={() => handleApplyChromaSensitivity()}
+                onClick={() => handleApplyChromaThreshold()}
                 disabled={isProcessing}
                 className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold shadow-xs transition-colors whitespace-nowrap"
               >
@@ -534,23 +494,23 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
 
             {/* Presets */}
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[10px] text-stone-500 font-medium">灵敏度预设:</span>
+              <span className="text-[10px] text-stone-500 font-medium">阈值预设:</span>
               {[
                 { label: '关闭 (0%)', val: 0 },
-                { label: '轻度 (25%)', val: 25 },
-                { label: '标准 (50%)', val: 50 },
-                { label: '强力 (75%)', val: 75 },
-                { label: '极致 (95%)', val: 95 },
+                { label: '0.25%', val: 0.25 },
+                { label: '默认 0.50%', val: 0.5 },
+                { label: '0.75%', val: 0.75 },
+                { label: '1.00%', val: 1 },
               ].map((preset) => (
                 <button
                   key={preset.val}
                   type="button"
                   onClick={() => {
-                    setLocalChromaSensitivity(preset.val);
-                    handleApplyChromaSensitivity(preset.val);
+                    setLocalChromaThreshold(preset.val);
+                    handleApplyChromaThreshold(preset.val);
                   }}
                   className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
-                    localChromaSensitivity === preset.val
+                    localChromaThreshold === preset.val
                       ? 'bg-amber-500 text-white border-amber-500 font-bold'
                       : 'bg-white hover:bg-amber-100/60 text-stone-700 border-amber-200/80'
                   }`}

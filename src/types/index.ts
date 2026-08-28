@@ -23,9 +23,12 @@ export interface ProcessingConfig {
   rowCount: number;             // default 3 (e.g. 1 to 8 rows)
   targetWidth: number;          // e.g. 2364px (600 DPI @ 100mm) or 1182px (300 DPI)
   targetHeight: number;         // e.g. 472px (600 DPI @ 20mm) or 236px (300 DPI)
-  paddingCutPercentX: number;   // default 5% (cuts 5% from left and right)
-  paddingCutPercentY: number;   // default 5% (cuts 5% from top and bottom)
-  manualThreshold: number;      // default 140 (0-255 manual grayscale cutoff)
+  outputDpi?: number;           // optional PNG pHYs density metadata, e.g. 600 or 300
+  paddingCutPxX: number;        // default 24px (cuts fixed pixels from left and right)
+  paddingCutPxY: number;        // default 24px (cuts fixed pixels from top and bottom)
+  manualThreshold: number;      // default: CV-estimated global grayscale cutoff, user-adjustable 0-255
+  autoThreshold?: number;       // latest CV-estimated global threshold used as the slider default
+  thresholdSource?: 'auto' | 'manual'; // whether manualThreshold follows CV suggestion or user input
   enableMorphClose: boolean;    // default true (kernel repair)
   morphMode?: MorphMode;        // default 'none' | 'erode' | 'dilate' | 'open' | 'close'
   morphStrength?: number;       // default 1 (kernel radius 1-6 px for high-res 600 DPI fine tuning)
@@ -33,10 +36,9 @@ export interface ProcessingConfig {
   emptyRowThresholdPercent: number; // default 0.3% (if ink pixels < 0.3%, marked as empty)
   invertResult: boolean;        // default false (true for white text on dark)
   inkColor: string;             // default '#000000'
-  chromaSensitivity?: number;   // default 50 (0-100: 0 = off, 1-100 = sensitivity for filtering red/blue/colored guidelines & stamps)
-  thresholdMode?: 'manual' | 'adaptive'; // legacy compatibility
-  adaptiveBlockSize?: number;   // legacy compatibility
-  adaptiveC?: number;           // legacy compatibility
+  chromaThresholdPercent?: number; // default 0.5 (0-1% channel spread threshold; 0 = off)
+  chromaSensitivity?: number;   // legacy compatibility for previous 0-100 sensitivity configs
+  thresholdMode?: 'manual';     // current UI uses manual + auto global seed
   chromaFilterMode?: string;    // legacy compatibility
   chromaThreshold?: number;     // legacy compatibility
   redSensitivity?: number;      // legacy compatibility

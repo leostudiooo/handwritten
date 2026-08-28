@@ -13,14 +13,14 @@ export const PRESET_SCENARIOS: PresetScenario[] = [
     name: '严重手机阴影',
     badge: '测试除影',
     description: '手机近距离拍摄，纸张右下半部处于深色浓重阴影中',
-    notes: '高斯自适应二值化后，阴影区与亮区字迹粗细均匀，背景纯白无噪点。',
+    notes: '使用 CV 自动建议全局阈值后，可继续手动微调阴影区与亮区的墨迹保留程度。',
   },
   {
     id: 'rough_border',
     name: '手画框线粗糙',
     badge: '测试去框',
     description: '手绘尺子边框粗细不匀，且内侧有墨水晕染',
-    notes: '死区 5% Padding 裁切完全滤除手绘框线，输出 PNG 边缘干净无黑线。',
+    notes: '死区 24px Padding 裁切滤除手绘框线，输出 PNG 边缘干净无黑线。',
   },
   {
     id: 'empty_row',

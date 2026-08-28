@@ -1,6 +1,6 @@
 {
   "name": "手写素材标准化模块",
-  "description": "半自动手写素材标准化前端模块，支持8点阶梯网格透视矫正、高斯自适应除影、死区裁切、空行过滤与透明PNG素材标准化导出。",
+  "description": "半自动手写素材标准化前端模块，支持8点阶梯网格透视矫正、CV全局阈值建议、死区裁切、空行过滤与透明PNG素材标准化导出。",
   "requestFramePermissions": ["camera"],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

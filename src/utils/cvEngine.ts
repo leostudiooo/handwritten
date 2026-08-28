@@ -148,35 +148,30 @@ export function warpPerspectiveBilinear(
 }
 
 /**
- * Convert RGB ImageData to Grayscale Uint8Array with Unified Chroma Filtering (0-100 range).
- * - chromaSensitivity = 0: Disabled (Standard Perceptual Grayscale: 0.299R + 0.587G + 0.114B).
- * - chromaSensitivity = 1..100: Automatically suppresses colored grid lines, red seals, dark red/cyan guidelines, and paper stains to paper white (255), while perfectly preserving neutral black/dark ink.
+ * Convert RGB ImageData to Grayscale Uint8Array with Unified Chroma Filtering.
+ * - chromaThresholdPercent = 0: Disabled.
+ * - chromaThresholdPercent = 0.01..1: Suppress pixels whose channel spread
+ *   exceeds the selected threshold, while preserving near-neutral dark ink.
  */
 export function convertToFilteredGrayscale(
   imgData: ImageData,
-  chromaSensitivity: number = 0
+  chromaThresholdPercent: number = 0
 ): Uint8Array {
   const width = imgData.width;
   const height = imgData.height;
   const src = imgData.data;
   const gray = new Uint8Array(width * height);
-  const sens = Math.max(0, Math.min(100, chromaSensitivity ?? 0));
+  const thresholdPercent = Math.max(0, Math.min(1, chromaThresholdPercent ?? 0));
 
-  if (sens <= 0) {
+  if (thresholdPercent <= 0) {
     for (let i = 0, j = 0; i < src.length; i += 4, j++) {
       gray[j] = (src[i] * 77 + src[i + 1] * 150 + src[i + 2] * 29) >> 8;
     }
     return gray;
   }
 
-  // Unified sensitivity mapping (0-100)
-  const normS = sens / 100;
-  // Saturation threshold: higher sensitivity -> lower threshold (more aggressive suppression of faint tints)
-  const satThreshold = Math.max(0.025, 0.70 * (1 - normS * 0.95));
-  // Dominance threshold for dark-red / vermilion lines & seals:
-  const redExcessDelta = Math.max(2, Math.round(36 * (1 - normS * 0.92)));
-  // Dominance threshold for blue/cyan grid lines:
-  const blueExcessDelta = Math.max(2, Math.round(36 * (1 - normS * 0.92)));
+  const minChannelDelta = Math.max(1, (thresholdPercent / 100) * 255);
+  const darkInkNeutralDelta = Math.max(3, minChannelDelta * 2);
 
   for (let i = 0, j = 0; i < src.length; i += 4, j++) {
     const r = src[i];
@@ -186,90 +181,130 @@ export function convertToFilteredGrayscale(
     const maxC = Math.max(r, g, b);
     const minC = Math.min(r, g, b);
     const delta = maxC - minC;
-    const saturation = maxC > 0 ? delta / maxC : 0;
-    const redExcess = Math.max(0, r - Math.max(g, b));
-    const blueExcess = Math.max(0, b - Math.max(r, g));
+    const luminance = (r * 77 + g * 150 + b * 29) >> 8;
+    const isNearNeutralDarkInk = luminance < 96 && delta <= darkInkNeutralDelta;
 
-    // Determine if pixel has chromatic content (colored guideline, red stamp, cyan line, paper stain)
-    const isChromatic =
-      saturation >= satThreshold ||
-      (redExcess >= redExcessDelta && r > Math.max(g, b) * 1.04) ||
-      (blueExcess >= blueExcessDelta && b > Math.max(r, g) * 1.04);
+    const isChromatic = !isNearNeutralDarkInk && delta >= minChannelDelta;
 
     if (isChromatic) {
       gray[j] = 255; // Suppress colored background lines to white
     } else {
-      gray[j] = (r * 77 + g * 150 + b * 29) >> 8; // Preserve black/dark neutral ink
+      gray[j] = luminance; // Preserve black/dark neutral ink
     }
   }
 
   return gray;
 }
 
-/**
- * Fast Adaptive Thresholding with Gaussian-weighted/Integral Mean Box window
- * Robust against strong mobile shadows and uneven paper illumination.
- */
-export function adaptiveThresholdFast(
-  imgData: ImageData,
-  blockSize: number = 37,
-  C: number = 8,
-  chromaSensitivity: number = 0
-): Uint8Array {
-  const width = imgData.width;
-  const height = imgData.height;
+function getChromaThresholdPercent(config: ProcessingConfig): number {
+  if (config.chromaThresholdPercent !== undefined) {
+    return config.chromaThresholdPercent;
+  }
 
-  // 1. Convert to Filtered Grayscale with chroma suppression
-  const gray = convertToFilteredGrayscale(imgData, chromaSensitivity);
+  if (config.chromaSensitivity !== undefined) {
+    return Math.max(0, Math.min(1, config.chromaSensitivity / 100));
+  }
 
-  // 2. Build Integral Image (O(N) time) for instantaneous block-mean computation
-  const integral = new Float64Array((width + 1) * (height + 1));
-  const intW = width + 1;
+  return config.chromaFilterMode && config.chromaFilterMode !== 'none' ? 0.5 : 0;
+}
 
-  for (let y = 0; y < height; y++) {
-    let rowSum = 0;
-    const grayRowOffset = y * width;
-    const intRowOffset = (y + 1) * intW;
-    const prevIntRowOffset = y * intW;
+function estimateOtsuThresholdFromHistogram(histogram: Uint32Array, total: number): number {
+  if (total <= 0) return 140;
 
-    for (let x = 0; x < width; x++) {
-      rowSum += gray[grayRowOffset + x];
-      integral[intRowOffset + (x + 1)] = integral[prevIntRowOffset + (x + 1)] + rowSum;
+  let weightedSum = 0;
+  for (let i = 0; i < 256; i++) {
+    weightedSum += i * histogram[i];
+  }
+
+  let backgroundWeight = 0;
+  let backgroundSum = 0;
+  let bestVariance = -1;
+  let bestThreshold = 140;
+
+  for (let threshold = 0; threshold < 256; threshold++) {
+    backgroundWeight += histogram[threshold];
+    if (backgroundWeight === 0) continue;
+
+    const foregroundWeight = total - backgroundWeight;
+    if (foregroundWeight === 0) break;
+
+    backgroundSum += threshold * histogram[threshold];
+    const backgroundMean = backgroundSum / backgroundWeight;
+    const foregroundMean = (weightedSum - backgroundSum) / foregroundWeight;
+    const meanDelta = backgroundMean - foregroundMean;
+    const betweenClassVariance = backgroundWeight * foregroundWeight * meanDelta * meanDelta;
+
+    if (betweenClassVariance > bestVariance) {
+      bestVariance = betweenClassVariance;
+      bestThreshold = threshold;
     }
   }
 
-  const radius = Math.floor(blockSize / 2);
-  const binary = new Uint8Array(width * height);
-  const minDelta = Math.max(C, 7);
+  return Math.max(30, Math.min(230, Math.round(bestThreshold)));
+}
 
-  for (let y = 0; y < height; y++) {
-    const y0 = Math.max(0, y - radius);
-    const y1 = Math.min(height, y + radius + 1);
+/**
+ * Estimates one global manual threshold from all warped rows using Otsu's method.
+ * The same target-resolution warp and chroma filtering are used by the final pipeline,
+ * so the slider default matches the pixels that will actually be binarized.
+ */
+export function estimateGlobalManualThreshold(
+  sourceImage: HTMLImageElement | ImageData | HTMLCanvasElement,
+  mesh: LadderPoints,
+  config: ProcessingConfig
+): number {
+  let srcData: ImageData;
 
-    for (let x = 0; x < width; x++) {
-      const x0 = Math.max(0, x - radius);
-      const x1 = Math.min(width, x + radius + 1);
+  if (sourceImage instanceof ImageData) {
+    srcData = sourceImage;
+  } else {
+    const sourceWidth = sourceImage instanceof HTMLImageElement
+      ? sourceImage.naturalWidth || sourceImage.width
+      : sourceImage.width;
+    const sourceHeight = sourceImage instanceof HTMLImageElement
+      ? sourceImage.naturalHeight || sourceImage.height
+      : sourceImage.height;
+    const canvas = document.createElement('canvas');
+    canvas.width = sourceWidth;
+    canvas.height = sourceHeight;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return config.manualThreshold ?? 140;
 
-      const count = (x1 - x0) * (y1 - y0);
-      const sum =
-        integral[y1 * intW + x1] -
-        integral[y0 * intW + x1] -
-        integral[y1 * intW + x0] +
-        integral[y0 * intW + x0];
+    ctx.drawImage(sourceImage as any, 0, 0);
+    srcData = ctx.getImageData(0, 0, sourceWidth, sourceHeight);
+  }
 
-      const localMean = sum / count;
-      const pixelVal = gray[y * width + x];
+  const rowCount = config.rowCount || Math.max(1, Math.floor(mesh.length / 2 - 1));
+  const warpWidth = Math.max(1, Math.round(config.targetWidth || 1000));
+  const warpHeight = Math.max(1, Math.round(config.targetHeight || 200));
+  const { padX, padY } = getPaddingCutPixels(config, warpWidth, warpHeight);
+  const innerX0 = Math.max(0, Math.min(warpWidth - 1, padX));
+  const innerY0 = Math.max(0, Math.min(warpHeight - 1, padY));
+  const innerX1 = Math.max(innerX0 + 1, warpWidth - padX);
+  const innerY1 = Math.max(innerY0 + 1, warpHeight - padY);
+  const chromaThresholdPercent = getChromaThresholdPercent(config);
 
-      // Adaptive threshold condition
-      if (pixelVal < localMean - minDelta) {
-        binary[y * width + x] = 0; // Black (Ink)
-      } else {
-        binary[y * width + x] = 255; // White (Paper)
+  const histogram = new Uint32Array(256);
+  let total = 0;
+
+  for (let i = 0; i < rowCount; i++) {
+    const pTopL = mesh[2 * i] || mesh[0];
+    const pTopR = mesh[2 * i + 1] || mesh[1];
+    const pBotR = mesh[2 * i + 3] || mesh[mesh.length - 1];
+    const pBotL = mesh[2 * i + 2] || mesh[mesh.length - 2];
+    const warped = warpPerspectiveBilinear(srcData, warpWidth, warpHeight, [pTopL, pTopR, pBotR, pBotL]);
+    const gray = convertToFilteredGrayscale(warped, chromaThresholdPercent);
+
+    for (let y = innerY0; y < innerY1; y++) {
+      const rowOffset = y * warpWidth;
+      for (let x = innerX0; x < innerX1; x++) {
+        histogram[gray[rowOffset + x]]++;
+        total++;
       }
     }
   }
 
-  return binary;
+  return estimateOtsuThresholdFromHistogram(histogram, total);
 }
 
 /**
@@ -278,11 +313,11 @@ export function adaptiveThresholdFast(
 export function manualThreshold(
   imgData: ImageData,
   threshold: number = 140,
-  chromaSensitivity: number = 0
+  chromaThresholdPercent: number = 0
 ): Uint8Array {
   const width = imgData.width;
   const height = imgData.height;
-  const gray = convertToFilteredGrayscale(imgData, chromaSensitivity);
+  const gray = convertToFilteredGrayscale(imgData, chromaThresholdPercent);
   const binary = new Uint8Array(width * height);
 
   for (let j = 0; j < width * height; j++) {
@@ -290,6 +325,189 @@ export function manualThreshold(
   }
 
   return binary;
+}
+
+function getPaddingCutPixels(
+  config: ProcessingConfig,
+  width: number,
+  height: number
+): { padX: number; padY: number } {
+  const maxPadX = Math.max(0, Math.floor((width - 1) / 2));
+  const maxPadY = Math.max(0, Math.floor((height - 1) / 2));
+  const padX = Math.max(0, Math.min(maxPadX, Math.round(config.paddingCutPxX || 0)));
+  const padY = Math.max(0, Math.min(maxPadY, Math.round(config.paddingCutPxY || 0)));
+
+  return { padX, padY };
+}
+
+function readUint32(bytes: Uint8Array, offset: number): number {
+  return (
+    ((bytes[offset] << 24) >>> 0) +
+    ((bytes[offset + 1] << 16) >>> 0) +
+    ((bytes[offset + 2] << 8) >>> 0) +
+    bytes[offset + 3]
+  ) >>> 0;
+}
+
+function writeUint32(bytes: Uint8Array, offset: number, value: number): void {
+  bytes[offset] = (value >>> 24) & 0xff;
+  bytes[offset + 1] = (value >>> 16) & 0xff;
+  bytes[offset + 2] = (value >>> 8) & 0xff;
+  bytes[offset + 3] = value & 0xff;
+}
+
+function getPngChunkType(bytes: Uint8Array, offset: number): string {
+  return String.fromCharCode(
+    bytes[offset + 4],
+    bytes[offset + 5],
+    bytes[offset + 6],
+    bytes[offset + 7]
+  );
+}
+
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) {
+    crc ^= bytes[i];
+    for (let bit = 0; bit < 8; bit++) {
+      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
+  const output = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const part of parts) {
+    output.set(part, offset);
+    offset += part.length;
+  }
+  return output;
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const chunks: string[] = [];
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    let chunk = '';
+    const end = Math.min(i + chunkSize, bytes.length);
+    for (let j = i; j < end; j++) {
+      chunk += String.fromCharCode(bytes[j]);
+    }
+    chunks.push(chunk);
+  }
+  return btoa(chunks.join(''));
+}
+
+function createPhysChunk(dpi: number): Uint8Array {
+  const pixelsPerMeter = Math.max(1, Math.round(dpi / 0.0254));
+  const typeBytes = new Uint8Array([0x70, 0x48, 0x59, 0x73]);
+  const dataBytes = new Uint8Array(9);
+  writeUint32(dataBytes, 0, pixelsPerMeter);
+  writeUint32(dataBytes, 4, pixelsPerMeter);
+  dataBytes[8] = 1;
+
+  const crcBytes = concatBytes(typeBytes, dataBytes);
+  const chunk = new Uint8Array(21);
+  writeUint32(chunk, 0, dataBytes.length);
+  chunk.set(typeBytes, 4);
+  chunk.set(dataBytes, 8);
+  writeUint32(chunk, 17, crc32(crcBytes));
+  return chunk;
+}
+
+function applyPngDpiMetadata(dataUrl: string, dpi?: number): string {
+  if (!dpi || typeof atob === 'undefined' || typeof btoa === 'undefined') return dataUrl;
+
+  const prefix = 'data:image/png;base64,';
+  if (!dataUrl.startsWith(prefix)) return dataUrl;
+
+  try {
+    const pngBytes = base64ToBytes(dataUrl.slice(prefix.length));
+    if (pngBytes.length < 33) return dataUrl;
+
+    const physChunk = createPhysChunk(dpi);
+    let offset = 8;
+    let insertAt = 8;
+
+    while (offset + 12 <= pngBytes.length) {
+      const chunkLength = readUint32(pngBytes, offset);
+      const chunkEnd = offset + 12 + chunkLength;
+      if (chunkEnd > pngBytes.length) break;
+
+      const chunkType = getPngChunkType(pngBytes, offset);
+      if (chunkType === 'pHYs') {
+        const updatedBytes = concatBytes(
+          pngBytes.subarray(0, offset),
+          physChunk,
+          pngBytes.subarray(chunkEnd)
+        );
+        return `${prefix}${bytesToBase64(updatedBytes)}`;
+      }
+      if (chunkType === 'IHDR') insertAt = chunkEnd;
+      if (chunkType === 'IDAT') break;
+
+      offset = chunkEnd;
+    }
+
+    const updatedBytes = concatBytes(
+      pngBytes.subarray(0, insertAt),
+      physChunk,
+      pngBytes.subarray(insertAt)
+    );
+    return `${prefix}${bytesToBase64(updatedBytes)}`;
+  } catch (err) {
+    console.warn('Failed to embed PNG DPI metadata:', err);
+    return dataUrl;
+  }
+}
+
+function createOutputCanvas(width: number, height: number): {
+  canvas: HTMLCanvasElement | OffscreenCanvas;
+  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+} {
+  if (typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) throw new Error('Canvas 2D context creation failed');
+    return { canvas, ctx };
+  }
+
+  if (typeof OffscreenCanvas !== 'undefined') {
+    const canvas = new OffscreenCanvas(width, height);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) throw new Error('OffscreenCanvas 2D context creation failed');
+    return { canvas, ctx };
+  }
+
+  throw new Error('No canvas implementation available for PNG export');
+}
+
+async function createStandardPngDataUrl(
+  canvas: HTMLCanvasElement | OffscreenCanvas,
+  config: ProcessingConfig
+): Promise<string> {
+  if ('toDataURL' in canvas) {
+    return applyPngDpiMetadata(canvas.toDataURL('image/png'), config.outputDpi);
+  }
+
+  const blob = await canvas.convertToBlob({ type: 'image/png' });
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const dataUrl = `data:image/png;base64,${bytesToBase64(bytes)}`;
+  return applyPngDpiMetadata(dataUrl, config.outputDpi);
 }
 
 /**
@@ -521,28 +739,22 @@ export function filterSmallNoiseComponents(
 /**
  * Performs Dead-Zone Padding Cut and calculates ink statistics and bounding box.
  */
-export function processBoxImage(
+export async function processBoxImage(
   warpedImageData: ImageData,
   config: ProcessingConfig,
   rowIndex: number
-): ProcessedRow {
+): Promise<ProcessedRow> {
   const startTime = performance.now();
   const rawW = warpedImageData.width;
   const rawH = warpedImageData.height;
 
-  // 1. Binarization: Manual Thresholding with Unified Chroma Filter (0-100)
-  const chromaSens =
-    config.chromaSensitivity !== undefined
-      ? config.chromaSensitivity
-      : config.chromaFilterMode && config.chromaFilterMode !== 'none'
-      ? 50
-      : 0;
+  // 1. Binarization with Unified Chroma Filter (0-1% threshold)
+  const chromaThresholdPercent = getChromaThresholdPercent(config);
 
-  const thresholdVal = config.manualThreshold ?? 140;
   const binary = manualThreshold(
     warpedImageData,
-    thresholdVal,
-    chromaSens
+    config.manualThreshold ?? config.autoThreshold ?? 140,
+    chromaThresholdPercent
   );
 
   // 2. Morphological Operations: Erosion / Dilation / Open / Close
@@ -561,9 +773,8 @@ export function processBoxImage(
       ? filterSmallNoiseComponents(morphBinary, rawW, rawH, config.minNoiseArea)
       : morphBinary;
 
-  // 3. Dead Zone Padding Cut (5% inward crop)
-  const padX = Math.round((rawW * config.paddingCutPercentX) / 100);
-  const padY = Math.round((rawH * config.paddingCutPercentY) / 100);
+  // 3. Dead Zone Padding Cut (fixed-pixel inward crop)
+  const { padX, padY } = getPaddingCutPixels(config, rawW, rawH);
 
   const innerX0 = padX;
   const innerY0 = padY;
@@ -600,16 +811,14 @@ export function processBoxImage(
   const inkDensityPercent = (inkCount / validArea) * 100;
   const isEmpty = inkDensityPercent < config.emptyRowThresholdPercent;
 
-  // 5. Create Standard Transparent Output Canvas
-  const outCanvas = document.createElement('canvas');
-  outCanvas.width = config.targetWidth;
-  outCanvas.height = config.targetHeight;
-  const ctx = outCanvas.getContext('2d', { willReadFrequently: true });
+  // 5. Create transparent output at the warped resolution. The perspective warp
+  // already produced the requested target size, so do not upscale here.
+  const { canvas: outCanvas, ctx } = createOutputCanvas(rawW, rawH);
 
   let dataUrl = '';
   let bBox: { x: number; y: number; width: number; height: number } | undefined = undefined;
 
-  if (ctx && !isEmpty && inkCount > 0 && maxX >= minX && maxY >= minY) {
+  if (!isEmpty && inkCount > 0 && maxX >= minX && maxY >= minY) {
     bBox = {
       x: minX,
       y: minY,
@@ -617,51 +826,34 @@ export function processBoxImage(
       height: maxY - minY + 1,
     };
 
-    const innerImgData = ctx.createImageData(innerW, innerH);
-    const innerData = innerImgData.data;
+    const outputImgData = ctx.createImageData(rawW, rawH);
+    const outputData = outputImgData.data;
 
     for (let y = 0; y < innerH; y++) {
       const srcY = y + innerY0;
       for (let x = 0; x < innerW; x++) {
         const srcX = x + innerX0;
         const isInk = processedBinary[srcY * rawW + srcX] === 0;
-        const idx = (y * innerW + x) * 4;
+        const idx = (srcY * rawW + srcX) * 4;
 
         if (isInk) {
-          innerData[idx] = 0;
-          innerData[idx + 1] = 0;
-          innerData[idx + 2] = 0;
-          innerData[idx + 3] = 255; // Solid Ink
+          outputData[idx] = 0;
+          outputData[idx + 1] = 0;
+          outputData[idx + 2] = 0;
+          outputData[idx + 3] = 255; // Solid Ink
         } else {
-          innerData[idx] = 255;
-          innerData[idx + 1] = 255;
-          innerData[idx + 2] = 255;
-          innerData[idx + 3] = 0; // Transparent Background
+          outputData[idx] = 255;
+          outputData[idx + 1] = 255;
+          outputData[idx + 2] = 255;
+          outputData[idx + 3] = 0; // Transparent Background
         }
       }
     }
 
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = innerW;
-    tempCanvas.height = innerH;
-    const tempCtx = tempCanvas.getContext('2d');
-    if (tempCtx) {
-      tempCtx.putImageData(innerImgData, 0, 0);
-
-      ctx.clearRect(0, 0, config.targetWidth, config.targetHeight);
-      
-      const scaleX = config.targetWidth / rawW;
-      const scaleY = config.targetHeight / rawH;
-      const destX = padX * scaleX;
-      const destY = padY * scaleY;
-      const destW = innerW * scaleX;
-      const destH = innerH * scaleY;
-
-      ctx.drawImage(tempCanvas, destX, destY, destW, destH);
-      dataUrl = outCanvas.toDataURL('image/png');
-    }
+    ctx.putImageData(outputImgData, 0, 0);
+    dataUrl = await createStandardPngDataUrl(outCanvas, config);
   } else {
-    dataUrl = outCanvas.toDataURL('image/png');
+    dataUrl = await createStandardPngDataUrl(outCanvas, config);
   }
 
   const processingTimeMs = Math.round(performance.now() - startTime);
@@ -674,8 +866,8 @@ export function processBoxImage(
     totalPixelCount: validArea,
     inkDensityPercent: Number(inkDensityPercent.toFixed(3)),
     dataUrl,
-    width: config.targetWidth,
-    height: config.targetHeight,
+    width: rawW,
+    height: rawH,
     boundingBox: bBox,
     processingTimeMs,
   };
@@ -720,9 +912,10 @@ export async function runStandardizationPipeline(
   // Derive row count from mesh length: (N + 1) * 2 points => N rows
   const numRows = config.rowCount || Math.max(1, Math.floor(mesh.length / 2 - 1));
 
-  // Intermediate warp size for standard processing (1000 x 200)
-  const warpWidth = 1000;
-  const warpHeight = 200;
+  // Warp directly into the requested standard material resolution so all
+  // thresholding, morphology, denoise, and alpha conversion happen 1:1.
+  const warpWidth = Math.max(1, Math.round(config.targetWidth || 1000));
+  const warpHeight = Math.max(1, Math.round(config.targetHeight || 200));
 
   const rows: ProcessedRow[] = [];
 
@@ -736,8 +929,8 @@ export async function runStandardizationPipeline(
 
     // 1. Perspective Warp
     const warped = warpPerspectiveBilinear(srcData, warpWidth, warpHeight, corners);
-    // 2. Dead Zone Cut + Adaptive Binarization + Empty Detection + Standard Output
-    const processed = processBoxImage(warped, config, i);
+    // 2. Dead Zone Cut + Binarization + Empty Detection + Standard Output
+    const processed = await processBoxImage(warped, config, i);
     rows.push(processed);
   }
 

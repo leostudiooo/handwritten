@@ -1,6 +1,6 @@
 import React from 'react';
 import { ProcessingConfig, MorphMode } from '../types';
-import { X, Sliders, RotateCcw, Check, Sparkles, Palette, ShieldCheck, Minimize2, Maximize2 } from 'lucide-react';
+import { X, Sliders, RotateCcw, Check, Palette, ShieldCheck, Minimize2, Maximize2 } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -20,7 +20,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   React.useEffect(() => {
     setLocalConfig({
       ...config,
-      chromaSensitivity: config.chromaSensitivity ?? 50,
+      thresholdMode: 'manual',
+      autoThreshold: config.autoThreshold ?? config.manualThreshold ?? 140,
+      thresholdSource: config.thresholdSource ?? 'auto',
+      chromaThresholdPercent:
+        config.chromaThresholdPercent ??
+        (config.chromaSensitivity !== undefined ? config.chromaSensitivity / 100 : 0.5),
     });
   }, [config, isOpen]);
 
@@ -31,12 +36,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       rowCount: 3,
       targetWidth: 2364,
       targetHeight: 472,
-      paddingCutPercentX: 5,
-      paddingCutPercentY: 5,
-      thresholdMode: 'adaptive',
+      outputDpi: 600,
+      paddingCutPxX: 24,
+      paddingCutPxY: 24,
+      thresholdMode: 'manual',
       manualThreshold: 140,
-      adaptiveBlockSize: 51,
-      adaptiveC: 8,
+      autoThreshold: 140,
+      thresholdSource: 'auto',
       enableMorphClose: true,
       morphMode: 'none',
       morphStrength: 1,
@@ -44,12 +50,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       emptyRowThresholdPercent: 0.3,
       invertResult: false,
       inkColor: '#000000',
-      chromaSensitivity: 50,
+      chromaThresholdPercent: 0.5,
     });
   };
 
   const handleSave = () => {
-    onSaveConfig(localConfig);
+    onSaveConfig({ ...localConfig, thresholdMode: 'manual' });
     onClose();
   };
 
@@ -82,29 +88,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Settings Body */}
         <div className="p-5 space-y-5 max-h-[70vh] overflow-y-auto text-xs">
-          {/* Section 0: Unified Chroma Filter Sensitivity (0-100) */}
+          {/* Section 0: Unified Chroma Filter Threshold (0-1%) */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <label className="font-bold text-stone-800 flex items-center gap-1.5">
                 <Palette className="w-3.5 h-3.5 text-amber-600" />
-                色度过滤灵敏度 (Chroma / Color Filter: 0 ~ 100)
+                色度过滤阈值 (Chroma Delta: 0 ~ 1%)
               </label>
               <span className="font-mono font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 text-[11px]">
-                {(localConfig.chromaSensitivity ?? 50) === 0
+                {(localConfig.chromaThresholdPercent ?? 0.5) === 0
                   ? '0% (已关闭 / 标准灰度)'
-                  : `${localConfig.chromaSensitivity ?? 50}% (${
-                      (localConfig.chromaSensitivity ?? 50) <= 25
-                        ? '轻度除色'
-                        : (localConfig.chromaSensitivity ?? 50) <= 50
-                        ? '标准除色'
-                        : (localConfig.chromaSensitivity ?? 50) <= 75
-                        ? '强力除色'
-                        : '极致除色'
-                    })`}
+                  : `${(localConfig.chromaThresholdPercent ?? 0.5).toFixed(2)}%`}
               </span>
             </div>
             <p className="text-[11px] text-stone-500">
-              全域自动过滤米字格/田字格红线、印章朱文、蓝色参考线与泛黄纸斑，仅保留纯黑中性墨宝。
+              按 RGB 通道差异识别彩色线条/印章/纸斑；阈值越小过滤越激进，1% 以内足够日常微调。
             </p>
 
             <div className="p-3 rounded-xl bg-amber-50/50 border border-amber-200/70 space-y-2.5">
@@ -112,13 +110,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 id="settings-chroma-sensitivity-slider"
                 type="range"
                 min="0"
-                max="100"
-                step="1"
-                value={localConfig.chromaSensitivity ?? 50}
+                max="1"
+                step="0.01"
+                value={localConfig.chromaThresholdPercent ?? 0.5}
                 onChange={(e) =>
                   setLocalConfig({
                     ...localConfig,
-                    chromaSensitivity: Number(e.target.value),
+                    chromaThresholdPercent: Number(e.target.value),
                   })
                 }
                 className="w-full accent-amber-500"
@@ -126,10 +124,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
               <div className="flex items-center justify-between text-[10px] text-stone-400">
                 <span>0% (关闭/原样)</span>
-                <span>25% (轻度)</span>
-                <span>50% (标准推荐)</span>
-                <span>75% (强力除暗红)</span>
-                <span>100% (极限纯黑)</span>
+                <span>0.25%</span>
+                <span>0.50% (默认)</span>
+                <span>0.75%</span>
+                <span>1.00%</span>
               </div>
 
               {/* Quick Presets */}
@@ -137,12 +135,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <span className="text-[10px] text-stone-500 font-medium">快捷档位:</span>
                 {[
                   { label: '关闭 (0%)', val: 0 },
-                  { label: '轻度 (25%)', val: 25 },
-                  { label: '标准 (50%)', val: 50 },
-                  { label: '强力 (75%)', val: 75 },
-                  { label: '极致 (95%)', val: 95 },
+                  { label: '0.25%', val: 0.25 },
+                  { label: '默认 0.50%', val: 0.5 },
+                  { label: '0.75%', val: 0.75 },
+                  { label: '1.00%', val: 1 },
                 ].map((preset) => {
-                  const isCur = (localConfig.chromaSensitivity ?? 50) === preset.val;
+                  const isCur = (localConfig.chromaThresholdPercent ?? 0.5) === preset.val;
                   return (
                     <button
                       key={preset.val}
@@ -150,7 +148,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       onClick={() =>
                         setLocalConfig({
                           ...localConfig,
-                          chromaSensitivity: preset.val,
+                          chromaThresholdPercent: preset.val,
                         })
                       }
                       className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
@@ -220,7 +218,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 type="button"
                 id="res-600dpi-btn"
                 onClick={() =>
-                  setLocalConfig({ ...localConfig, targetWidth: 2364, targetHeight: 472 })
+                  setLocalConfig({ ...localConfig, targetWidth: 2364, targetHeight: 472, outputDpi: 600 })
                 }
                 className={`p-3 rounded-xl border text-left transition-all ${
                   localConfig.targetWidth === 2364
@@ -240,7 +238,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <button
                 type="button"
                 onClick={() =>
-                  setLocalConfig({ ...localConfig, targetWidth: 2400, targetHeight: 480 })
+                  setLocalConfig({ ...localConfig, targetWidth: 2400, targetHeight: 480, outputDpi: 600 })
                 }
                 className={`p-3 rounded-xl border text-left transition-all ${
                   localConfig.targetWidth === 2400
@@ -255,7 +253,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <button
                 type="button"
                 onClick={() =>
-                  setLocalConfig({ ...localConfig, targetWidth: 1182, targetHeight: 236 })
+                  setLocalConfig({ ...localConfig, targetWidth: 1182, targetHeight: 236, outputDpi: 300 })
                 }
                 className={`p-3 rounded-xl border text-left transition-all ${
                   localConfig.targetWidth === 1182
@@ -270,7 +268,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <button
                 type="button"
                 onClick={() =>
-                  setLocalConfig({ ...localConfig, targetWidth: 1000, targetHeight: 200 })
+                  setLocalConfig({ ...localConfig, targetWidth: 1000, targetHeight: 200, outputDpi: undefined })
                 }
                 className={`p-3 rounded-xl border text-left transition-all ${
                   localConfig.targetWidth === 1000
@@ -284,197 +282,157 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
-          {/* Section 2: Thresholding Mode Selection */}
-          <div className="space-y-2 border-t border-stone-100 pt-4">
-            <label className="font-bold text-stone-800 block">
-              二值化阈值模式 (Thresholding Mode)
-            </label>
-            <div className="grid grid-cols-2 gap-2">
+          {/* Section 2: Global Threshold Controls */}
+          <div className="space-y-3 bg-amber-50/50 p-3.5 rounded-xl border border-amber-200/60">
+            <div className="flex items-center justify-between gap-3">
+              <label className="font-bold text-amber-950">
+                全局灰度阈值 (CV 自动建议 + 手动微调)
+              </label>
+              <span className="font-mono font-bold text-amber-800 bg-white px-2 py-0.5 rounded border border-amber-300 shadow-xs">
+                {localConfig.manualThreshold ?? 140} / 255
+              </span>
+            </div>
+            <p className="text-[11px] text-amber-800/80">
+              默认值由当前网格的高分辨率矫正结果自动估算；滑块仍是唯一生效阈值，便于按墨色手动收紧或放宽。
+            </p>
+            <input
+              id="manual-threshold-slider"
+              type="range"
+              min="30"
+              max="230"
+              step="1"
+              value={localConfig.manualThreshold ?? 140}
+              onChange={(e) =>
+                setLocalConfig({
+                  ...localConfig,
+                  thresholdMode: 'manual',
+                  manualThreshold: Number(e.target.value),
+                  thresholdSource: 'manual',
+                })
+              }
+              className="w-full accent-amber-600"
+            />
+            <div className="flex items-center gap-1.5 pt-1 flex-wrap">
+              <span className="text-[11px] text-amber-900/70 font-medium">快速预设:</span>
+              {localConfig.autoThreshold !== undefined && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setLocalConfig({
+                      ...localConfig,
+                      thresholdMode: 'manual',
+                      manualThreshold: localConfig.autoThreshold ?? localConfig.manualThreshold,
+                      thresholdSource: 'auto',
+                    })
+                  }
+                  className="px-2 py-0.5 rounded bg-amber-500 hover:bg-amber-600 text-[10px] font-bold text-white border border-amber-500"
+                >
+                  CV 建议 ({localConfig.autoThreshold})
+                </button>
+              )}
               <button
                 type="button"
-                id="threshold-mode-adaptive-btn"
-                onClick={() =>
-                  setLocalConfig({ ...localConfig, thresholdMode: 'adaptive' })
-                }
-                className={`p-3 rounded-xl border text-left transition-all ${
-                  localConfig.thresholdMode !== 'manual'
-                    ? 'border-amber-500 bg-amber-50/70 shadow-xs'
-                    : 'border-stone-200 hover:bg-stone-50'
-                }`}
+                onClick={() => setLocalConfig({ ...localConfig, thresholdMode: 'manual', manualThreshold: 110, thresholdSource: 'manual' })}
+                className="px-2 py-0.5 rounded bg-white hover:bg-amber-100 text-[10px] font-medium text-stone-700 border border-amber-200"
               >
-                <div className="font-bold text-stone-900 flex items-center gap-1.5">
-                  <span>自适应局部阈值</span>
-                  <span className="text-[10px] bg-amber-200/60 text-amber-800 px-1 rounded font-medium">推荐</span>
-                </div>
-                <div className="text-[11px] text-stone-500 mt-0.5">抗阴影/光照不均，自动逐块计算</div>
+                极细/淡墨 (110)
               </button>
-
               <button
                 type="button"
-                id="threshold-mode-manual-btn"
-                onClick={() =>
-                  setLocalConfig({ ...localConfig, thresholdMode: 'manual' })
-                }
-                className={`p-3 rounded-xl border text-left transition-all ${
-                  localConfig.thresholdMode === 'manual'
-                    ? 'border-amber-500 bg-amber-50/70 shadow-xs'
-                    : 'border-stone-200 hover:bg-stone-50'
-                }`}
+                onClick={() => setLocalConfig({ ...localConfig, thresholdMode: 'manual', manualThreshold: 140, thresholdSource: 'manual' })}
+                className="px-2 py-0.5 rounded bg-white hover:bg-amber-100 text-[10px] font-medium text-stone-700 border border-amber-200"
               >
-                <div className="font-bold text-stone-900">手动指定阈值</div>
-                <div className="text-[11px] text-stone-500 mt-0.5">全局固定灰度切割 (0~255)</div>
+                标准墨迹 (140)
+              </button>
+              <button
+                type="button"
+                onClick={() => setLocalConfig({ ...localConfig, thresholdMode: 'manual', manualThreshold: 170, thresholdSource: 'manual' })}
+                className="px-2 py-0.5 rounded bg-white hover:bg-amber-100 text-[10px] font-medium text-stone-700 border border-amber-200"
+              >
+                浓重饱满 (170)
               </button>
             </div>
           </div>
-
-          {/* Section 3A: Manual Threshold Controls */}
-          {localConfig.thresholdMode === 'manual' && (
-            <div className="space-y-3 bg-amber-50/50 p-3.5 rounded-xl border border-amber-200/60">
-              <div className="flex items-center justify-between">
-                <label className="font-bold text-amber-950">
-                  手动灰度切割阈值 (Manual Threshold)
-                </label>
-                <span className="font-mono font-bold text-amber-800 bg-white px-2 py-0.5 rounded border border-amber-300 shadow-xs">
-                  {localConfig.manualThreshold ?? 140} / 255
-                </span>
-              </div>
-              <p className="text-[11px] text-amber-800/80">
-                灰度小于该阈值的像素判定为墨水笔迹 (Alpha 255)，大于该值的背景透明化 (Alpha 0)。
-              </p>
-              <input
-                id="manual-threshold-slider"
-                type="range"
-                min="30"
-                max="230"
-                step="1"
-                value={localConfig.manualThreshold ?? 140}
-                onChange={(e) =>
-                  setLocalConfig({
-                    ...localConfig,
-                    manualThreshold: Number(e.target.value),
-                  })
-                }
-                className="w-full accent-amber-600"
-              />
-              {/* Quick Presets for Manual Threshold */}
-              <div className="flex items-center gap-1.5 pt-1">
-                <span className="text-[11px] text-amber-900/70 font-medium">快速预设:</span>
-                <button
-                  type="button"
-                  onClick={() => setLocalConfig({ ...localConfig, manualThreshold: 110 })}
-                  className="px-2 py-0.5 rounded bg-white hover:bg-amber-100 text-[10px] font-medium text-stone-700 border border-amber-200"
-                >
-                  极细/淡墨 (110)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLocalConfig({ ...localConfig, manualThreshold: 140 })}
-                  className="px-2 py-0.5 rounded bg-white hover:bg-amber-100 text-[10px] font-medium text-stone-700 border border-amber-200"
-                >
-                  标准墨迹 (140)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLocalConfig({ ...localConfig, manualThreshold: 170 })}
-                  className="px-2 py-0.5 rounded bg-white hover:bg-amber-100 text-[10px] font-medium text-stone-700 border border-amber-200"
-                >
-                  浓重饱满 (170)
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Section 3B: Adaptive Threshold Controls */}
-          {localConfig.thresholdMode !== 'manual' && (
-            <>
-              {/* Adaptive Threshold Block Size */}
-              <div className="space-y-3 border-t border-stone-100 pt-4">
-                <div className="flex items-center justify-between">
-                  <label className="font-bold text-stone-800">
-                    高斯自适应局部窗口 (Block Size)
-                  </label>
-                  <span className="font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/50">
-                    {localConfig.adaptiveBlockSize} px
-                  </span>
-                </div>
-                <p className="text-[11px] text-stone-500">
-                  PRD 3.4 规则：消除大面积阴影与渐变光。建议 31~51 之间奇数。
-                </p>
-                <input
-                  type="range"
-                  min="21"
-                  max="65"
-                  step="2"
-                  value={localConfig.adaptiveBlockSize}
-                  onChange={(e) =>
-                    setLocalConfig({
-                      ...localConfig,
-                      adaptiveBlockSize: Number(e.target.value),
-                    })
-                  }
-                  className="w-full accent-amber-500"
-                />
-              </div>
-
-              {/* Adaptive Constant C */}
-              <div className="space-y-3 border-t border-stone-100 pt-4">
-                <div className="flex items-center justify-between">
-                  <label className="font-bold text-stone-800">
-                    二值化阈值偏移常数 (Constant C)
-                  </label>
-                  <span className="font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/50">
-                    {localConfig.adaptiveC}
-                  </span>
-                </div>
-                <p className="text-[11px] text-stone-500">
-                  数值越大背景越干净，数值越小笔划保留越细腻。建议 6~12。
-                </p>
-                <input
-                  type="range"
-                  min="2"
-                  max="20"
-                  step="1"
-                  value={localConfig.adaptiveC}
-                  onChange={(e) =>
-                    setLocalConfig({
-                      ...localConfig,
-                      adaptiveC: Number(e.target.value),
-                    })
-                  }
-                  className="w-full accent-amber-500"
-                />
-              </div>
-            </>
-          )}
 
           {/* Section 4: Dead Zone Padding Cut */}
           <div className="space-y-3 border-t border-stone-100 pt-4">
             <div className="flex items-center justify-between">
               <label className="font-bold text-stone-800">
-                死区裁切比例 (Padding Cut %，去边框)
+                死区裁切像素 (Padding Cut px，去边框)
               </label>
               <span className="font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/50">
-                {localConfig.paddingCutPercentX}%
+                左右 {localConfig.paddingCutPxX}px / 上下 {localConfig.paddingCutPxY}px
               </span>
             </div>
             <p className="text-[11px] text-stone-500">
-              PRD 3.3 规则：向内收缩裁除手绘墨水框线。范围建议 3%~8%。
+              按目标分辨率的固定像素向内裁除手绘框线，不随画幅宽高比例缩放。默认 24px。
             </p>
-            <input
-              type="range"
-              min="0"
-              max="12"
-              step="1"
-              value={localConfig.paddingCutPercentX}
-              onChange={(e) =>
-                setLocalConfig({
-                  ...localConfig,
-                  paddingCutPercentX: Number(e.target.value),
-                  paddingCutPercentY: Number(e.target.value),
-                })
-              }
-              className="w-full accent-amber-500"
-            />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-[11px] font-medium text-stone-600">
+                  <span>左右裁切</span>
+                  <span>{localConfig.paddingCutPxX}px</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max={Math.min(240, Math.max(0, Math.floor(((localConfig.targetWidth || 1000) - 1) / 2)))}
+                  step="1"
+                  value={localConfig.paddingCutPxX}
+                  onChange={(e) =>
+                    setLocalConfig({
+                      ...localConfig,
+                      paddingCutPxX: Number(e.target.value),
+                    })
+                  }
+                  className="w-full accent-amber-500"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-[11px] font-medium text-stone-600">
+                  <span>上下裁切</span>
+                  <span>{localConfig.paddingCutPxY}px</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max={Math.min(120, Math.max(0, Math.floor(((localConfig.targetHeight || 200) - 1) / 2)))}
+                  step="1"
+                  value={localConfig.paddingCutPxY}
+                  onChange={(e) =>
+                    setLocalConfig({
+                      ...localConfig,
+                      paddingCutPxY: Number(e.target.value),
+                    })
+                  }
+                  className="w-full accent-amber-500"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap pt-1">
+              <span className="text-[10px] text-stone-400 font-medium">快捷档位:</span>
+              {[
+                { label: '关闭 0px', x: 0, y: 0 },
+                { label: '细框 12px', x: 12, y: 12 },
+                { label: '默认 24px', x: 24, y: 24 },
+                { label: '粗框 40px', x: 40, y: 40 },
+              ].map((preset) => (
+                <button
+                  key={preset.label}
+                  type="button"
+                  onClick={() =>
+                    setLocalConfig({
+                      ...localConfig,
+                      paddingCutPxX: preset.x,
+                      paddingCutPxY: preset.y,
+                    })
+                  }
+                  className="px-2 py-0.5 rounded bg-white hover:bg-stone-100 text-[10px] font-medium text-stone-700 border border-stone-200"
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Section 5: Empty Row Threshold */}

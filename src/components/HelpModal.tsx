@@ -59,7 +59,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
             </h4>
             <p className="text-[11px] leading-relaxed text-stone-600">
               Box 1 (P0,P1,P3,P2)、Box 2 (P2,P3,P5,P4)、Box 3 (P4,P5,P7,P6) 分别进行独立 <code>warpPerspective</code> 双线性插值映射，解决中部拱起卷曲。
-              随后向内收缩 5%（Padding Cut）物理裁切手绘墨水框线。
+              随后按固定像素死区（默认 24px）向内裁切手绘墨水框线。
             </p>
           </div>
 
@@ -67,11 +67,11 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
           <div className="border border-stone-200 rounded-xl p-3.5 bg-stone-50/50">
             <h4 className="font-bold text-stone-900 mb-1.5 flex items-center gap-1.5">
               <ShieldCheck className="w-4 h-4 text-emerald-600" />
-              3. 二值化除影（自适应/手动阈值）与空行过滤 (Section 3.4 & 3.5)
+              3. 自动全局阈值建议、手动微调与空行过滤 (Section 3.4 & 3.5)
             </h4>
             <p className="text-[11px] leading-relaxed text-stone-600">
-              默认采用<strong>高斯积分自适应二值化</strong>算法，动态计算局部灰度均值，彻底消除手机俯拍产生的倾斜阴影；
-              同时支持<strong>手动指定全局灰度阈值</strong>（0~255），方便精细控制墨迹深浅与干枯断笔。
+              默认从当前高分辨率矫正行素材中自动估算<strong>全局灰度阈值</strong>，作为手动滑块初始值；
+              用户仍可手动指定阈值（0~255），精细控制墨迹深浅、阴影容忍度与干枯断笔保留。
               <br />
               若字迹像素占比低于 0.3%（容错阈值），判定为空行并自动丢弃，不输出多余图片。
             </p>
@@ -84,7 +84,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({ isOpen, onClose }) => {
               4. 600 DPI / 300 DPI 超清透明 PNG 导出 (Section 3.6)
             </h4>
             <p className="text-[11px] leading-relaxed text-stone-600">
-              字迹居中缩放至超清出版级 600 DPI（100mm × 20mm 对应 2364 × 472 px）或 300 DPI 规格，白色背景转换为 100% 透明 Alpha 通道，支持单张下载、复制图像与批量 ZIP 打包。结合 600 DPI 高密度像素，形态学侵蚀/加粗支持亚毫米级（0.04mm）极致微调。
+              每行在透视矫正阶段直接采样到超清出版级 600 DPI（100mm × 20mm 对应 2364 × 472 px）或 300 DPI 规格，白色背景转换为 100% 透明 Alpha 通道，支持单张下载、复制图像与批量 ZIP 打包。结合目标分辨率像素网格，形态学侵蚀/加粗可在导出尺寸上直接微调。
             </p>
           </div>
         </div>

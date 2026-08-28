@@ -4,7 +4,11 @@ import {
   ProcessingConfig,
   ProcessingResult,
 } from './types';
-import { autoPredictLadderMesh, runStandardizationPipeline } from './utils/cvEngine';
+import {
+  autoPredictLadderMesh,
+  estimateGlobalManualThreshold,
+  runStandardizationPipeline,
+} from './utils/cvEngine';
 import { PRESET_SCENARIOS } from './utils/presetGenerators';
 import { Header } from './components/Header';
 import { ImageUploader } from './components/ImageUploader';
@@ -39,12 +43,13 @@ export default function App() {
     rowCount: 3,                // Default 3 rows (100x20mm each)
     targetWidth: 2364,          // 600 DPI @ 100mm (Ultra-high precision for morphological editing)
     targetHeight: 472,          // 600 DPI @ 20mm
-    paddingCutPercentX: 5,      // 5% dead zone cut
-    paddingCutPercentY: 5,
-    thresholdMode: 'adaptive',  // 'adaptive' or 'manual'
-    manualThreshold: 140,       // Default 140 (0-255)
-    adaptiveBlockSize: 51,      // Odd 31-101
-    adaptiveC: 8,               // Constant C 5-20
+    outputDpi: 600,             // Embed PNG density metadata
+    paddingCutPxX: 24,          // Fixed-pixel dead zone cut
+    paddingCutPxY: 24,
+    thresholdMode: 'manual',    // Manual global threshold seeded by CV auto-detection
+    manualThreshold: 140,       // Replaced with detected threshold after image load
+    autoThreshold: 140,         // Latest CV-detected global threshold suggestion
+    thresholdSource: 'auto',    // Preserve user edits once the slider is changed
     enableMorphClose: true,     // Morph repair
     morphMode: 'none',          // 'none' | 'erode' | 'dilate' | 'open' | 'close'
     morphStrength: 1,           // 1 to 6 px for 600 DPI
@@ -52,7 +57,7 @@ export default function App() {
     emptyRowThresholdPercent: 0.3, // <0.3% empty discard
     invertResult: false,
     inkColor: '#000000',
-    chromaSensitivity: 50,      // 0-100: 0 = off, 1-100 = chroma filter sensitivity
+    chromaThresholdPercent: 0.5, // 0-1% channel spread threshold; 0 = off
   });
 
   // Processing & Results
@@ -99,6 +104,36 @@ export default function App() {
     }
     setLadderMesh(initialMesh);
 
+    try {
+      const fullResInitialMesh: LadderPoints = initialMesh.map((pt) => ({
+        x: Math.round(pt.x * ratio),
+        y: Math.round(pt.y * ratio),
+      })) as LadderPoints;
+      const imageCanvas = document.createElement('canvas');
+      imageCanvas.width = origImg.naturalWidth;
+      imageCanvas.height = origImg.naturalHeight;
+      const imageCtx = imageCanvas.getContext('2d', { willReadFrequently: true });
+      if (imageCtx) {
+        imageCtx.drawImage(origImg, 0, 0);
+        const imageData = imageCtx.getImageData(0, 0, origImg.naturalWidth, origImg.naturalHeight);
+        const detectedThreshold = estimateGlobalManualThreshold(
+          imageData,
+          fullResInitialMesh,
+          { ...config, thresholdMode: 'manual' }
+        );
+        setConfig((prev) => ({
+          ...prev,
+          thresholdMode: 'manual',
+          manualThreshold: detectedThreshold,
+          autoThreshold: detectedThreshold,
+          thresholdSource: 'auto',
+        }));
+      }
+    } catch (err) {
+      console.warn('Automatic threshold estimation failed; keeping existing manual threshold:', err);
+      setConfig((prev) => ({ ...prev, thresholdMode: 'manual' }));
+    }
+
     setCurrentStep('mesh');
   };
 
@@ -107,9 +142,6 @@ export default function App() {
     if (!originalImage || !previewImage) return;
 
     const currentConfig = overrideConfig || config;
-    if (overrideConfig) {
-      setConfig(overrideConfig);
-    }
 
     setIsProcessing(true);
 
@@ -134,6 +166,28 @@ export default function App() {
         originalImage.naturalWidth,
         originalImage.naturalHeight
       );
+
+      const detectedThreshold = estimateGlobalManualThreshold(
+        originalImageData,
+        fullResMesh,
+        { ...currentConfig, thresholdMode: 'manual' }
+      );
+      const shouldUseDetectedThreshold =
+        currentConfig.thresholdSource !== 'manual' &&
+        (currentConfig.autoThreshold === undefined ||
+          currentConfig.manualThreshold === undefined ||
+          currentConfig.manualThreshold === currentConfig.autoThreshold ||
+          currentConfig.thresholdSource === 'auto');
+      const processingConfig: ProcessingConfig = {
+        ...currentConfig,
+        thresholdMode: 'manual',
+        manualThreshold: shouldUseDetectedThreshold
+          ? detectedThreshold
+          : currentConfig.manualThreshold,
+        autoThreshold: detectedThreshold,
+        thresholdSource: shouldUseDetectedThreshold ? 'auto' : 'manual',
+      };
+      setConfig(processingConfig);
 
       // 3. Attempt Web Worker execution for non-blocking UI
       let result: ProcessingResult;
@@ -165,13 +219,13 @@ export default function App() {
             type: 'PROCESS_IMAGE',
             imageData: originalImageData,
             mesh: fullResMesh,
-            config: currentConfig,
+            config: processingConfig,
           });
         });
       } catch (workerErr) {
         console.warn('Web Worker execution fallback to microtask:', workerErr);
         // Fallback directly using CV Engine
-        result = await runStandardizationPipeline(originalImageData, fullResMesh, currentConfig);
+        result = await runStandardizationPipeline(originalImageData, fullResMesh, processingConfig);
       }
 
       setProcessingResult(result);
