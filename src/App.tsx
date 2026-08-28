@@ -57,7 +57,7 @@ export default function App() {
     emptyRowThresholdPercent: 0.3, // <0.3% empty discard
     invertResult: false,
     inkColor: '#000000',
-    chromaThresholdPercent: 0.5, // 0-1% channel spread threshold; 0 = off
+    chromaSensitivity: 0,        // 0-100: 0 = off, 1-100 = chroma filter sensitivity
   });
 
   // Processing & Results

@@ -42,10 +42,7 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
   const [copiedRowIdx, setCopiedRowIdx] = useState<number | null>(null);
   const [isZipping, setIsZipping] = useState(false);
   const [localManualThreshold, setLocalManualThreshold] = useState<number>(config.manualThreshold ?? 140);
-  const [localChromaThreshold, setLocalChromaThreshold] = useState<number>(
-    config.chromaThresholdPercent ??
-      (config.chromaSensitivity !== undefined ? config.chromaSensitivity / 100 : 0.5)
-  );
+  const [localChromaSensitivity, setLocalChromaSensitivity] = useState<number>(config.chromaSensitivity ?? 0);
   const [localMinNoiseArea, setLocalMinNoiseArea] = useState<number>(config.minNoiseArea ?? 8);
   const [localMorphMode, setLocalMorphMode] = useState<MorphMode>(
     config.morphMode ?? (config.enableMorphClose ? 'close' : 'none')
@@ -57,11 +54,8 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
   }, [config.manualThreshold]);
 
   useEffect(() => {
-    setLocalChromaThreshold(
-      config.chromaThresholdPercent ??
-        (config.chromaSensitivity !== undefined ? config.chromaSensitivity / 100 : 0.5)
-    );
-  }, [config.chromaThresholdPercent, config.chromaSensitivity]);
+    setLocalChromaSensitivity(config.chromaSensitivity ?? 0);
+  }, [config.chromaSensitivity]);
 
   useEffect(() => {
     setLocalMinNoiseArea(config.minNoiseArea ?? 8);
@@ -102,16 +96,16 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
     onUpdateConfigAndRerun(updated);
   };
 
-  // Handle Chroma Threshold (0-1%) Slider change & apply
-  const handleChromaThresholdChange = (val: number) => {
-    setLocalChromaThreshold(val);
+  // Handle Chroma Sensitivity (0-100) Slider change & apply
+  const handleChromaSensitivityChange = (val: number) => {
+    setLocalChromaSensitivity(val);
   };
 
-  const handleApplyChromaThreshold = (val?: number) => {
-    const targetVal = val !== undefined ? val : localChromaThreshold;
+  const handleApplyChromaSensitivity = (val?: number) => {
+    const targetVal = val !== undefined ? val : localChromaSensitivity;
     const updated: ProcessingConfig = {
       ...config,
-      chromaThresholdPercent: targetVal,
+      chromaSensitivity: targetVal,
     };
     onUpdateConfigAndRerun(updated);
   };
@@ -437,7 +431,7 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
             </button>
           </div>
         </div>
-        {/* Unified Chroma Filter Threshold (0-1%) Row */}
+        {/* Unified Chroma Filter Sensitivity (0-100) Row */}
         <div className="pt-3 border-t border-stone-100 space-y-2">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div className="flex items-center gap-2">
@@ -445,25 +439,33 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
                 <Palette className="w-3 h-3" />
               </div>
               <span className="text-xs font-bold text-stone-900">
-                色度过滤阈值 (Chroma Delta):
+                色度过滤灵敏度 (Chroma Filter Sensitivity):
               </span>
               <span className="font-mono text-xs font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 shadow-xs">
-                {localChromaThreshold === 0
+                {localChromaSensitivity === 0
                   ? '0% (已关闭 / 标准灰度)'
-                  : `${localChromaThreshold.toFixed(2)}%`}
+                  : `${localChromaSensitivity}% (${
+                      localChromaSensitivity <= 25
+                        ? '轻度除色'
+                        : localChromaSensitivity <= 50
+                        ? '标准除色'
+                        : localChromaSensitivity <= 75
+                        ? '强力除色'
+                        : '极致除色'
+                    })`}
               </span>
             </div>
 
             <span className="text-[11px] font-medium text-stone-500">
-              {localChromaThreshold === 0
+              {localChromaSensitivity === 0
                 ? '关闭色度过滤：保留彩色痕迹，按标准亮度进行灰度与二值化转换'
-                : localChromaThreshold <= 0.25
-                ? '激进过滤：极小色偏也会被视为彩色辅助线或纸斑'
-                : localChromaThreshold <= 0.5
-                ? '默认过滤：适合常见红蓝格线、印章色与轻微纸斑'
-                : localChromaThreshold <= 0.75
-                ? '温和过滤：允许少量通道偏差，减少误伤墨迹边缘'
-                : '最宽容过滤：只过滤更明显的色度差异'}
+                : localChromaSensitivity <= 25
+                ? '轻度过滤：仅消除高饱和度鲜艳红印与蓝色参考线'
+                : localChromaSensitivity <= 50
+                ? '标准过滤：自动消除米字格、红蓝格线、印章与纸斑'
+                : localChromaSensitivity <= 75
+                ? '强力过滤：进一步压掉暗红/浅蓝/泛黄纸色'
+                : '极致过滤：最大程度只保留中性深色墨迹'}
             </span>
           </div>
 
@@ -473,18 +475,18 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
                 id="result-chroma-sensitivity-slider"
                 type="range"
                 min="0"
-                max="1"
-                step="0.01"
-                value={localChromaThreshold}
-                onChange={(e) => handleChromaThresholdChange(Number(e.target.value))}
-                onMouseUp={() => handleApplyChromaThreshold()}
-                onTouchEnd={() => handleApplyChromaThreshold()}
+                max="100"
+                step="1"
+                value={localChromaSensitivity}
+                onChange={(e) => handleChromaSensitivityChange(Number(e.target.value))}
+                onMouseUp={() => handleApplyChromaSensitivity()}
+                onTouchEnd={() => handleApplyChromaSensitivity()}
                 className="w-full accent-amber-500"
               />
               <button
                 type="button"
                 id="result-apply-chroma-btn"
-                onClick={() => handleApplyChromaThreshold()}
+                onClick={() => handleApplyChromaSensitivity()}
                 disabled={isProcessing}
                 className="px-3 py-1 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-xs font-bold shadow-xs transition-colors whitespace-nowrap"
               >
@@ -494,23 +496,23 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
 
             {/* Presets */}
             <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-[10px] text-stone-500 font-medium">阈值预设:</span>
+              <span className="text-[10px] text-stone-500 font-medium">灵敏度预设:</span>
               {[
-                { label: '关闭 (0%)', val: 0 },
-                { label: '0.25%', val: 0.25 },
-                { label: '默认 0.50%', val: 0.5 },
-                { label: '0.75%', val: 0.75 },
-                { label: '1.00%', val: 1 },
+                { label: '默认关闭 (0%)', val: 0 },
+                { label: '轻度 (25%)', val: 25 },
+                { label: '标准 (50%)', val: 50 },
+                { label: '强力 (75%)', val: 75 },
+                { label: '极致 (95%)', val: 95 },
               ].map((preset) => (
                 <button
                   key={preset.val}
                   type="button"
                   onClick={() => {
-                    setLocalChromaThreshold(preset.val);
-                    handleApplyChromaThreshold(preset.val);
+                    setLocalChromaSensitivity(preset.val);
+                    handleApplyChromaSensitivity(preset.val);
                   }}
                   className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
-                    localChromaThreshold === preset.val
+                    localChromaSensitivity === preset.val
                       ? 'bg-amber-500 text-white border-amber-500 font-bold'
                       : 'bg-white hover:bg-amber-100/60 text-stone-700 border-amber-200/80'
                   }`}

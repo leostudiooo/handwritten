@@ -148,30 +148,35 @@ export function warpPerspectiveBilinear(
 }
 
 /**
- * Convert RGB ImageData to Grayscale Uint8Array with Unified Chroma Filtering.
- * - chromaThresholdPercent = 0: Disabled.
- * - chromaThresholdPercent = 0.01..1: Suppress pixels whose channel spread
- *   exceeds the selected threshold, while preserving near-neutral dark ink.
+ * Convert RGB ImageData to Grayscale Uint8Array with Unified Chroma Filtering (0-100 range).
+ * - chromaSensitivity = 0: Disabled (Standard Perceptual Grayscale: 0.299R + 0.587G + 0.114B).
+ * - chromaSensitivity = 1..100: Automatically suppresses colored grid lines, red seals, dark red/cyan guidelines, and paper stains to paper white (255), while preserving neutral black/dark ink.
  */
 export function convertToFilteredGrayscale(
   imgData: ImageData,
-  chromaThresholdPercent: number = 0
+  chromaSensitivity: number = 0
 ): Uint8Array {
   const width = imgData.width;
   const height = imgData.height;
   const src = imgData.data;
   const gray = new Uint8Array(width * height);
-  const thresholdPercent = Math.max(0, Math.min(1, chromaThresholdPercent ?? 0));
+  const sens = Math.max(0, Math.min(100, chromaSensitivity ?? 0));
 
-  if (thresholdPercent <= 0) {
+  if (sens <= 0) {
     for (let i = 0, j = 0; i < src.length; i += 4, j++) {
       gray[j] = (src[i] * 77 + src[i + 1] * 150 + src[i + 2] * 29) >> 8;
     }
     return gray;
   }
 
-  const minChannelDelta = Math.max(1, (thresholdPercent / 100) * 255);
-  const darkInkNeutralDelta = Math.max(3, minChannelDelta * 2);
+  // Unified sensitivity mapping (0-100)
+  const normS = sens / 100;
+  // Saturation threshold: higher sensitivity -> lower threshold (more aggressive suppression of faint tints)
+  const satThreshold = Math.max(0.025, 0.70 * (1 - normS * 0.95));
+  // Dominance threshold for dark-red / vermilion lines & seals:
+  const redExcessDelta = Math.max(2, Math.round(36 * (1 - normS * 0.92)));
+  // Dominance threshold for blue/cyan grid lines:
+  const blueExcessDelta = Math.max(2, Math.round(36 * (1 - normS * 0.92)));
 
   for (let i = 0, j = 0; i < src.length; i += 4, j++) {
     const r = src[i];
@@ -181,31 +186,31 @@ export function convertToFilteredGrayscale(
     const maxC = Math.max(r, g, b);
     const minC = Math.min(r, g, b);
     const delta = maxC - minC;
-    const luminance = (r * 77 + g * 150 + b * 29) >> 8;
-    const isNearNeutralDarkInk = luminance < 96 && delta <= darkInkNeutralDelta;
+    const saturation = maxC > 0 ? delta / maxC : 0;
+    const redExcess = Math.max(0, r - Math.max(g, b));
+    const blueExcess = Math.max(0, b - Math.max(r, g));
 
-    const isChromatic = !isNearNeutralDarkInk && delta >= minChannelDelta;
+    const isChromatic =
+      saturation >= satThreshold ||
+      (redExcess >= redExcessDelta && r > Math.max(g, b) * 1.04) ||
+      (blueExcess >= blueExcessDelta && b > Math.max(r, g) * 1.04);
 
     if (isChromatic) {
       gray[j] = 255; // Suppress colored background lines to white
     } else {
-      gray[j] = luminance; // Preserve black/dark neutral ink
+      gray[j] = (r * 77 + g * 150 + b * 29) >> 8; // Preserve black/dark neutral ink
     }
   }
 
   return gray;
 }
 
-function getChromaThresholdPercent(config: ProcessingConfig): number {
-  if (config.chromaThresholdPercent !== undefined) {
-    return config.chromaThresholdPercent;
-  }
-
+function getChromaSensitivity(config: ProcessingConfig): number {
   if (config.chromaSensitivity !== undefined) {
-    return Math.max(0, Math.min(1, config.chromaSensitivity / 100));
+    return config.chromaSensitivity;
   }
 
-  return config.chromaFilterMode && config.chromaFilterMode !== 'none' ? 0.5 : 0;
+  return config.chromaFilterMode && config.chromaFilterMode !== 'none' ? 50 : 0;
 }
 
 function estimateOtsuThresholdFromHistogram(histogram: Uint32Array, total: number): number {
@@ -282,7 +287,7 @@ export function estimateGlobalManualThreshold(
   const innerY0 = Math.max(0, Math.min(warpHeight - 1, padY));
   const innerX1 = Math.max(innerX0 + 1, warpWidth - padX);
   const innerY1 = Math.max(innerY0 + 1, warpHeight - padY);
-  const chromaThresholdPercent = getChromaThresholdPercent(config);
+  const chromaSensitivity = getChromaSensitivity(config);
 
   const histogram = new Uint32Array(256);
   let total = 0;
@@ -293,7 +298,7 @@ export function estimateGlobalManualThreshold(
     const pBotR = mesh[2 * i + 3] || mesh[mesh.length - 1];
     const pBotL = mesh[2 * i + 2] || mesh[mesh.length - 2];
     const warped = warpPerspectiveBilinear(srcData, warpWidth, warpHeight, [pTopL, pTopR, pBotR, pBotL]);
-    const gray = convertToFilteredGrayscale(warped, chromaThresholdPercent);
+    const gray = convertToFilteredGrayscale(warped, chromaSensitivity);
 
     for (let y = innerY0; y < innerY1; y++) {
       const rowOffset = y * warpWidth;
@@ -313,11 +318,11 @@ export function estimateGlobalManualThreshold(
 export function manualThreshold(
   imgData: ImageData,
   threshold: number = 140,
-  chromaThresholdPercent: number = 0
+  chromaSensitivity: number = 0
 ): Uint8Array {
   const width = imgData.width;
   const height = imgData.height;
-  const gray = convertToFilteredGrayscale(imgData, chromaThresholdPercent);
+  const gray = convertToFilteredGrayscale(imgData, chromaSensitivity);
   const binary = new Uint8Array(width * height);
 
   for (let j = 0; j < width * height; j++) {
@@ -748,13 +753,13 @@ export async function processBoxImage(
   const rawW = warpedImageData.width;
   const rawH = warpedImageData.height;
 
-  // 1. Binarization with Unified Chroma Filter (0-1% threshold)
-  const chromaThresholdPercent = getChromaThresholdPercent(config);
+  // 1. Binarization with Unified Chroma Filter (0-100 sensitivity)
+  const chromaSensitivity = getChromaSensitivity(config);
 
   const binary = manualThreshold(
     warpedImageData,
     config.manualThreshold ?? config.autoThreshold ?? 140,
-    chromaThresholdPercent
+    chromaSensitivity
   );
 
   // 2. Morphological Operations: Erosion / Dilation / Open / Close

@@ -23,9 +23,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       thresholdMode: 'manual',
       autoThreshold: config.autoThreshold ?? config.manualThreshold ?? 140,
       thresholdSource: config.thresholdSource ?? 'auto',
-      chromaThresholdPercent:
-        config.chromaThresholdPercent ??
-        (config.chromaSensitivity !== undefined ? config.chromaSensitivity / 100 : 0.5),
+      chromaSensitivity: config.chromaSensitivity ?? 0,
     });
   }, [config, isOpen]);
 
@@ -50,7 +48,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       emptyRowThresholdPercent: 0.3,
       invertResult: false,
       inkColor: '#000000',
-      chromaThresholdPercent: 0.5,
+      chromaSensitivity: 0,
     });
   };
 
@@ -88,21 +86,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
         {/* Settings Body */}
         <div className="p-5 space-y-5 max-h-[70vh] overflow-y-auto text-xs">
-          {/* Section 0: Unified Chroma Filter Threshold (0-1%) */}
+          {/* Section 0: Unified Chroma Filter Sensitivity (0-100) */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <label className="font-bold text-stone-800 flex items-center gap-1.5">
                 <Palette className="w-3.5 h-3.5 text-amber-600" />
-                色度过滤阈值 (Chroma Delta: 0 ~ 1%)
+                色度过滤灵敏度 (Chroma / Color Filter: 0 ~ 100)
               </label>
               <span className="font-mono font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 text-[11px]">
-                {(localConfig.chromaThresholdPercent ?? 0.5) === 0
+                {(localConfig.chromaSensitivity ?? 0) === 0
                   ? '0% (已关闭 / 标准灰度)'
-                  : `${(localConfig.chromaThresholdPercent ?? 0.5).toFixed(2)}%`}
+                  : `${localConfig.chromaSensitivity ?? 0}% (${
+                      (localConfig.chromaSensitivity ?? 0) <= 25
+                        ? '轻度除色'
+                        : (localConfig.chromaSensitivity ?? 0) <= 50
+                        ? '标准除色'
+                        : (localConfig.chromaSensitivity ?? 0) <= 75
+                        ? '强力除色'
+                        : '极致除色'
+                    })`}
               </span>
             </div>
             <p className="text-[11px] text-stone-500">
-              按 RGB 通道差异识别彩色线条/印章/纸斑；阈值越小过滤越激进，1% 以内足够日常微调。
+              默认关闭；打开后按原来的 0-100 灵敏度过滤米字格/田字格红线、印章朱文、蓝色参考线与泛黄纸斑。
             </p>
 
             <div className="p-3 rounded-xl bg-amber-50/50 border border-amber-200/70 space-y-2.5">
@@ -110,13 +116,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 id="settings-chroma-sensitivity-slider"
                 type="range"
                 min="0"
-                max="1"
-                step="0.01"
-                value={localConfig.chromaThresholdPercent ?? 0.5}
+                max="100"
+                step="1"
+                value={localConfig.chromaSensitivity ?? 0}
                 onChange={(e) =>
                   setLocalConfig({
                     ...localConfig,
-                    chromaThresholdPercent: Number(e.target.value),
+                    chromaSensitivity: Number(e.target.value),
                   })
                 }
                 className="w-full accent-amber-500"
@@ -124,23 +130,23 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
               <div className="flex items-center justify-between text-[10px] text-stone-400">
                 <span>0% (关闭/原样)</span>
-                <span>0.25%</span>
-                <span>0.50% (默认)</span>
-                <span>0.75%</span>
-                <span>1.00%</span>
+                <span>25% (轻度)</span>
+                <span>50% (标准)</span>
+                <span>75% (强力除暗红)</span>
+                <span>100% (极限纯黑)</span>
               </div>
 
               {/* Quick Presets */}
               <div className="flex items-center gap-1.5 flex-wrap pt-1 border-t border-amber-200/50">
                 <span className="text-[10px] text-stone-500 font-medium">快捷档位:</span>
                 {[
-                  { label: '关闭 (0%)', val: 0 },
-                  { label: '0.25%', val: 0.25 },
-                  { label: '默认 0.50%', val: 0.5 },
-                  { label: '0.75%', val: 0.75 },
-                  { label: '1.00%', val: 1 },
+                  { label: '默认关闭 (0%)', val: 0 },
+                  { label: '轻度 (25%)', val: 25 },
+                  { label: '标准 (50%)', val: 50 },
+                  { label: '强力 (75%)', val: 75 },
+                  { label: '极致 (95%)', val: 95 },
                 ].map((preset) => {
-                  const isCur = (localConfig.chromaThresholdPercent ?? 0.5) === preset.val;
+                  const isCur = (localConfig.chromaSensitivity ?? 0) === preset.val;
                   return (
                     <button
                       key={preset.val}
@@ -148,7 +154,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       onClick={() =>
                         setLocalConfig({
                           ...localConfig,
-                          chromaThresholdPercent: preset.val,
+                          chromaSensitivity: preset.val,
                         })
                       }
                       className={`px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${

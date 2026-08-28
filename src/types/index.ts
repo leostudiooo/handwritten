@@ -36,8 +36,7 @@ export interface ProcessingConfig {
   emptyRowThresholdPercent: number; // default 0.3% (if ink pixels < 0.3%, marked as empty)
   invertResult: boolean;        // default false (true for white text on dark)
   inkColor: string;             // default '#000000'
-  chromaThresholdPercent?: number; // default 0.5 (0-1% channel spread threshold; 0 = off)
-  chromaSensitivity?: number;   // legacy compatibility for previous 0-100 sensitivity configs
+  chromaSensitivity?: number;   // default 0 (0-100; 0 = off, 1-100 = chroma filter sensitivity)
   thresholdMode?: 'manual';     // current UI uses manual + auto global seed
   chromaFilterMode?: string;    // legacy compatibility
   chromaThreshold?: number;     // legacy compatibility
