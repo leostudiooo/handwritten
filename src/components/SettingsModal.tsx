@@ -108,7 +108,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </span>
             </div>
             <p className="text-[11px] text-stone-500">
-              默认关闭；打开后按原来的 0-100 灵敏度过滤米字格/田字格红线、印章朱文、蓝色参考线与泛黄纸斑。
+              默认关闭；打开后按饱和度过滤米字格/田字格红线、印章朱文、蓝色参考线与泛黄纸斑，并保护黑色/中性墨迹。
             </p>
 
             <div className="p-3 rounded-xl bg-amber-50/50 border border-amber-200/70 space-y-2.5">
@@ -132,8 +132,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <span>0% (关闭/原样)</span>
                 <span>25% (轻度)</span>
                 <span>50% (标准)</span>
-                <span>75% (强力除暗红)</span>
-                <span>100% (极限纯黑)</span>
+                <span>75% (强力除色)</span>
+                <span>100% (保护黑墨)</span>
               </div>
 
               {/* Quick Presets */}

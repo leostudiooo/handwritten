@@ -462,10 +462,10 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
                 : localChromaSensitivity <= 25
                 ? '轻度过滤：仅消除高饱和度鲜艳红印与蓝色参考线'
                 : localChromaSensitivity <= 50
-                ? '标准过滤：自动消除米字格、红蓝格线、印章与纸斑'
+                ? '标准过滤：按饱和度消除米字格、红蓝格线、印章与纸斑'
                 : localChromaSensitivity <= 75
-                ? '强力过滤：进一步压掉暗红/浅蓝/泛黄纸色'
-                : '极致过滤：最大程度只保留中性深色墨迹'}
+                ? '强力过滤：进一步压掉彩色干扰，同时保护中性黑墨'
+                : '极致过滤：最大程度除色，但避免黑色笔迹中空'}
             </span>
           </div>
 

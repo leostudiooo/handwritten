@@ -150,7 +150,9 @@ export function warpPerspectiveBilinear(
 /**
  * Convert RGB ImageData to Grayscale Uint8Array with Unified Chroma Filtering (0-100 range).
  * - chromaSensitivity = 0: Disabled (Standard Perceptual Grayscale: 0.299R + 0.587G + 0.114B).
- * - chromaSensitivity = 1..100: Automatically suppresses colored grid lines, red seals, dark red/cyan guidelines, and paper stains to paper white (255), while preserving neutral black/dark ink.
+ * - chromaSensitivity = 1..100: Suppresses saturated colored grid lines, seals,
+ *   blue/cyan guidelines, and paper stains to paper white (255), while protecting
+ *   dark neutral ink from being hollowed out by minor RGB channel casts.
  */
 export function convertToFilteredGrayscale(
   imgData: ImageData,
@@ -169,36 +171,42 @@ export function convertToFilteredGrayscale(
     return gray;
   }
 
-  // Unified sensitivity mapping (0-100)
+  // Unified sensitivity mapping (0-100). The chroma decision is intentionally
+  // saturation-led; low-luma neutral pixels are protected because scanner/camera
+  // color casts can make black ink appear falsely saturated.
   const normS = sens / 100;
-  // Saturation threshold: higher sensitivity -> lower threshold (more aggressive suppression of faint tints)
-  const satThreshold = Math.max(0.025, 0.70 * (1 - normS * 0.95));
-  // Dominance threshold for dark-red / vermilion lines & seals:
-  const redExcessDelta = Math.max(2, Math.round(36 * (1 - normS * 0.92)));
-  // Dominance threshold for blue/cyan grid lines:
-  const blueExcessDelta = Math.max(2, Math.round(36 * (1 - normS * 0.92)));
+  // Higher sensitivity -> lower saturation/absolute-chroma thresholds.
+  const satThreshold = Math.max(0.06, 0.70 * (1 - normS * 0.92));
+  const minChromaDelta = Math.max(6, Math.round(32 * (1 - normS * 0.75)));
+  // Higher sensitivity can reach darker colored artifacts, but neutral dark ink
+  // remains protected by a separate luma + absolute-chroma guard.
+  const chromaLumaFloor = Math.max(18, Math.round(70 * (1 - normS * 0.75)));
+  const darkInkProtectLuma = Math.round(72 + normS * 24);
+  const darkInkProtectDelta = Math.round(14 + normS * 28);
 
   for (let i = 0, j = 0; i < src.length; i += 4, j++) {
     const r = src[i];
     const g = src[i + 1];
     const b = src[i + 2];
+    const luma = (r * 77 + g * 150 + b * 29) >> 8;
 
     const maxC = Math.max(r, g, b);
     const minC = Math.min(r, g, b);
     const delta = maxC - minC;
     const saturation = maxC > 0 ? delta / maxC : 0;
-    const redExcess = Math.max(0, r - Math.max(g, b));
-    const blueExcess = Math.max(0, b - Math.max(r, g));
+
+    const isDarkNeutralInk = luma <= darkInkProtectLuma && delta <= darkInkProtectDelta;
 
     const isChromatic =
-      saturation >= satThreshold ||
-      (redExcess >= redExcessDelta && r > Math.max(g, b) * 1.04) ||
-      (blueExcess >= blueExcessDelta && b > Math.max(r, g) * 1.04);
+      !isDarkNeutralInk &&
+      luma >= chromaLumaFloor &&
+      delta >= minChromaDelta &&
+      saturation >= satThreshold;
 
     if (isChromatic) {
       gray[j] = 255; // Suppress colored background lines to white
     } else {
-      gray[j] = (r * 77 + g * 150 + b * 29) >> 8; // Preserve black/dark neutral ink
+      gray[j] = luma; // Preserve black/dark neutral ink
     }
   }
 
