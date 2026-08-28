@@ -19,6 +19,7 @@ import {
   Eraser,
   Undo2,
   RotateCcw,
+  Move,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import confetti from 'canvas-confetti';
@@ -31,6 +32,8 @@ type DrawingState = {
   pointerId: number | null;
   lastPoint: { x: number; y: number } | null;
 };
+
+type EditToolMode = 'erase' | 'pan';
 
 const loadImageFromDataUrl = (dataUrl: string): Promise<HTMLImageElement> =>
   new Promise((resolve, reject) => {
@@ -149,6 +152,8 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
   const [localMorphStrength, setLocalMorphStrength] = useState<number>(config.morphStrength ?? 1);
   const [editingRowIndex, setEditingRowIndex] = useState<number | null>(null);
   const [eraserSize, setEraserSize] = useState(28);
+  const [editZoom, setEditZoom] = useState(1);
+  const [editToolMode, setEditToolMode] = useState<EditToolMode>('erase');
   const [editHistory, setEditHistory] = useState<Record<number, string[]>>({});
   const [isErasing, setIsErasing] = useState(false);
   const canvasRefs = useRef<Record<number, HTMLCanvasElement | null>>({});
@@ -415,6 +420,8 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
 
   const handleStartRowEdit = (row: ProcessedRow) => {
     setEditingRowIndex(row.rowIndex);
+    setEditZoom(1);
+    setEditToolMode('erase');
     setEditHistory((prev) => ({
       ...prev,
       [row.rowIndex]: prev[row.rowIndex] ?? [],
@@ -1278,10 +1285,14 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
               ) : (
                 <div className="space-y-3">
                   {isEditing && (
-                    <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-3 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-                      <div className="flex items-center gap-2 text-xs text-amber-950">
-                        <Eraser className="w-4 h-4 text-amber-600" />
-                        <span className="font-bold">拖动画布擦除多余墨点</span>
+                    <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-3 space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 text-xs text-amber-950">
+                          <Eraser className="w-4 h-4 text-amber-600" />
+                          <span className="font-bold">
+                            {editToolMode === 'erase' ? '拖动画布擦除多余墨点' : '移动查看放大的图像'}
+                          </span>
+                        </div>
                         {isErasing && (
                           <span className="font-mono text-[10px] text-amber-700 bg-white/80 px-2 py-0.5 rounded border border-amber-200">
                             擦除中
@@ -1290,6 +1301,55 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2">
+                        <div className="inline-flex bg-white p-0.5 rounded-lg border border-amber-200 shadow-2xs">
+                          <button
+                            type="button"
+                            onClick={() => setEditToolMode('erase')}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                              editToolMode === 'erase'
+                                ? 'bg-amber-500 text-white font-bold shadow-xs'
+                                : 'text-stone-600 hover:text-stone-900 hover:bg-amber-50'
+                            }`}
+                          >
+                            <Eraser className="w-3.5 h-3.5" />
+                            擦除
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditToolMode('pan')}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                              editToolMode === 'pan'
+                                ? 'bg-stone-900 text-white font-bold shadow-xs'
+                                : 'text-stone-600 hover:text-stone-900 hover:bg-stone-100'
+                            }`}
+                          >
+                            <Move className="w-3.5 h-3.5" />
+                            移动
+                          </button>
+                        </div>
+
+                        <div className="inline-flex bg-white p-0.5 rounded-lg border border-stone-200 text-xs shadow-2xs">
+                          {[
+                            { label: '完整', value: 1 },
+                            { label: '150%', value: 1.5 },
+                            { label: '200%', value: 2 },
+                            { label: '300%', value: 3 },
+                          ].map((zoom) => (
+                            <button
+                              key={zoom.value}
+                              type="button"
+                              onClick={() => setEditZoom(zoom.value)}
+                              className={`px-2 py-1 rounded-md font-medium transition-colors ${
+                                editZoom === zoom.value
+                                  ? 'bg-stone-900 text-white font-bold shadow-xs'
+                                  : 'text-stone-600 hover:text-stone-900 hover:bg-stone-100'
+                              }`}
+                            >
+                              {zoom.label}
+                            </button>
+                          ))}
+                        </div>
+
                         <div className="flex items-center gap-2 min-w-[210px]">
                           <span className="text-[11px] font-semibold text-stone-600 whitespace-nowrap">
                             橡皮 {eraserSize}px
@@ -1331,31 +1391,69 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
                     </div>
                   )}
 
+                  {isEditing && (
+                    <div className="rounded-xl border border-stone-200 bg-white/85 p-2 shadow-2xs space-y-1.5">
+                      <div className="flex items-center justify-between px-1 text-[11px] text-stone-500">
+                        <span className="font-bold text-stone-700">完整预览</span>
+                        <span className="font-mono">{row.width}×{row.height}px</span>
+                      </div>
+                      <div
+                        style={getBackgroundStyle()}
+                        className="rounded-lg border border-stone-200/80 p-1 overflow-hidden"
+                      >
+                        <img
+                          src={row.dataUrl}
+                          alt={`${row.title} 完整预览`}
+                          className="block mx-auto max-w-full max-h-16 w-auto h-auto object-contain select-none"
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   <div
                     style={getBackgroundStyle()}
-                    className={`rounded-xl border p-3 sm:p-5 flex items-center justify-center overflow-x-auto shadow-inner transition-colors ${
-                      isEditing ? 'border-amber-300 ring-2 ring-amber-200/70' : 'border-stone-200/80'
+                    className={`rounded-xl border p-2 sm:p-4 overflow-auto shadow-inner transition-colors overscroll-contain ${
+                      isEditing
+                        ? 'max-h-[70vh] border-amber-300 ring-2 ring-amber-200/70'
+                        : 'border-stone-200/80'
                     }`}
                   >
                     {isEditing ? (
-                      <canvas
-                        ref={(el) => {
-                          canvasRefs.current[row.rowIndex] = el;
-                        }}
-                        width={row.width}
-                        height={row.height}
-                        onPointerDown={(event) => handleEraserPointerDown(event, row)}
-                        onPointerMove={(event) => handleEraserPointerMove(event, row)}
-                        onPointerUp={(event) => handleEraserPointerEnd(event, row)}
-                        onPointerCancel={(event) => handleEraserPointerEnd(event, row)}
-                        className="max-h-48 w-auto object-contain drop-shadow-sm select-none touch-none cursor-crosshair"
-                        aria-label={`${row.title} 手动擦除画布`}
-                      />
+                      <div
+                        className="min-w-full"
+                        style={{ width: `${editZoom * 100}%` }}
+                      >
+                        <canvas
+                          ref={(el) => {
+                            canvasRefs.current[row.rowIndex] = el;
+                          }}
+                          width={row.width}
+                          height={row.height}
+                          onPointerDown={(event) => {
+                            if (editToolMode === 'erase') handleEraserPointerDown(event, row);
+                          }}
+                          onPointerMove={(event) => {
+                            if (editToolMode === 'erase') handleEraserPointerMove(event, row);
+                          }}
+                          onPointerUp={(event) => {
+                            if (editToolMode === 'erase') handleEraserPointerEnd(event, row);
+                          }}
+                          onPointerCancel={(event) => {
+                            if (editToolMode === 'erase') handleEraserPointerEnd(event, row);
+                          }}
+                          className={`block w-full h-auto rounded-md drop-shadow-sm select-none ${
+                            editToolMode === 'erase'
+                              ? 'touch-none cursor-crosshair'
+                              : 'pointer-events-none touch-auto cursor-grab'
+                          }`}
+                          aria-label={`${row.title} 手动擦除画布`}
+                        />
+                      </div>
                     ) : (
                       <img
                         src={row.dataUrl}
                         alt={row.title}
-                        className="max-h-28 object-contain drop-shadow-sm select-none"
+                        className="mx-auto max-w-full max-h-32 sm:max-h-28 w-auto h-auto object-contain drop-shadow-sm select-none"
                       />
                     )}
                   </div>
