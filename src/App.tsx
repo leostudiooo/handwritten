@@ -293,6 +293,7 @@ export default function App() {
             result={processingResult}
             config={config}
             onUpdateConfigAndRerun={handleRunProcessing}
+            onUpdateResult={setProcessingResult}
             onBackToEdit={() => setCurrentStep('mesh')}
             onNewImage={handleReset}
             onOpenSettings={() => setIsSettingsOpen(true)}

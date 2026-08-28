@@ -440,7 +440,7 @@ function createPhysChunk(dpi: number): Uint8Array {
   return chunk;
 }
 
-function applyPngDpiMetadata(dataUrl: string, dpi?: number): string {
+export function applyPngDpiMetadata(dataUrl: string, dpi?: number): string {
   if (!dpi || typeof atob === 'undefined' || typeof btoa === 'undefined') return dataUrl;
 
   const prefix = 'data:image/png;base64,';

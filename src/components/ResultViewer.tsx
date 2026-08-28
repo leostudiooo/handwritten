@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ProcessedRow, ProcessingResult, ProcessingConfig, MorphMode } from '../types';
+import { applyPngDpiMetadata } from '../utils/cvEngine';
 import {
   Download,
   Copy,
@@ -15,14 +16,111 @@ import {
   Minimize2,
   Maximize2,
   Palette,
+  Eraser,
+  Undo2,
+  RotateCcw,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import confetti from 'canvas-confetti';
+
+const MAX_EDIT_HISTORY = 20;
+const INK_ALPHA_THRESHOLD = 8;
+
+type DrawingState = {
+  rowIndex: number | null;
+  pointerId: number | null;
+  lastPoint: { x: number; y: number } | null;
+};
+
+const loadImageFromDataUrl = (dataUrl: string): Promise<HTMLImageElement> =>
+  new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Failed to load editable PNG'));
+    img.src = dataUrl;
+  });
+
+const drawDataUrlToCanvas = async (
+  canvas: HTMLCanvasElement,
+  dataUrl: string,
+  width: number,
+  height: number
+) => {
+  const img = await loadImageFromDataUrl(dataUrl);
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) throw new Error('Canvas 2D context creation failed');
+
+  canvas.width = width;
+  canvas.height = height;
+  ctx.clearRect(0, 0, width, height);
+  ctx.drawImage(img, 0, 0, width, height);
+};
+
+const getCanvasInkStats = (
+  canvas: HTMLCanvasElement,
+  totalPixelCount: number,
+  emptyRowThresholdPercent: number
+): Pick<ProcessedRow, 'inkPixelCount' | 'totalPixelCount' | 'inkDensityPercent' | 'isEmpty' | 'boundingBox'> => {
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const width = canvas.width;
+  const height = canvas.height;
+  const validTotal = Math.max(1, totalPixelCount || width * height);
+
+  if (!ctx || width <= 0 || height <= 0) {
+    return {
+      inkPixelCount: 0,
+      totalPixelCount: validTotal,
+      inkDensityPercent: 0,
+      isEmpty: true,
+      boundingBox: undefined,
+    };
+  }
+
+  const data = ctx.getImageData(0, 0, width, height).data;
+  let inkCount = 0;
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < height; y++) {
+    const rowOffset = y * width;
+    for (let x = 0; x < width; x++) {
+      const alpha = data[(rowOffset + x) * 4 + 3];
+      if (alpha > INK_ALPHA_THRESHOLD) {
+        inkCount++;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+
+  const inkDensityPercent = (inkCount / validTotal) * 100;
+  const boundingBox = inkCount > 0
+    ? {
+        x: minX,
+        y: minY,
+        width: maxX - minX + 1,
+        height: maxY - minY + 1,
+      }
+    : undefined;
+
+  return {
+    inkPixelCount: inkCount,
+    totalPixelCount: validTotal,
+    inkDensityPercent: Number(inkDensityPercent.toFixed(3)),
+    isEmpty: inkDensityPercent < emptyRowThresholdPercent,
+    boundingBox,
+  };
+};
 
 interface ResultViewerProps {
   result: ProcessingResult;
   config: ProcessingConfig;
   onUpdateConfigAndRerun: (newConfig: ProcessingConfig) => void;
+  onUpdateResult: (nextResult: ProcessingResult) => void;
   onBackToEdit: () => void;
   onNewImage: () => void;
   onOpenSettings: () => void;
@@ -33,6 +131,7 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
   result,
   config,
   onUpdateConfigAndRerun,
+  onUpdateResult,
   onBackToEdit,
   onNewImage,
   onOpenSettings,
@@ -48,6 +147,16 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
     config.morphMode ?? (config.enableMorphClose ? 'close' : 'none')
   );
   const [localMorphStrength, setLocalMorphStrength] = useState<number>(config.morphStrength ?? 1);
+  const [editingRowIndex, setEditingRowIndex] = useState<number | null>(null);
+  const [eraserSize, setEraserSize] = useState(28);
+  const [editHistory, setEditHistory] = useState<Record<number, string[]>>({});
+  const [isErasing, setIsErasing] = useState(false);
+  const canvasRefs = useRef<Record<number, HTMLCanvasElement | null>>({});
+  const drawingStateRef = useRef<DrawingState>({
+    rowIndex: null,
+    pointerId: null,
+    lastPoint: null,
+  });
 
   useEffect(() => {
     setLocalManualThreshold(config.manualThreshold ?? 140);
@@ -68,6 +177,23 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
   useEffect(() => {
     setLocalMorphStrength(config.morphStrength ?? 1);
   }, [config.morphStrength]);
+
+  useEffect(() => {
+    if (editingRowIndex === null) return;
+
+    const row = result.rows.find((item) => item.rowIndex === editingRowIndex);
+    const canvas = canvasRefs.current[editingRowIndex];
+    if (!row || (row.isEmpty && !row.isManuallyEdited) || !canvas) return;
+
+    let isCancelled = false;
+    drawDataUrlToCanvas(canvas, row.dataUrl, row.width, row.height).catch((err) => {
+      if (!isCancelled) console.warn('Failed to prepare eraser canvas:', err);
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [editingRowIndex, result.rows]);
 
   // Trigger celebration confetti on mount if at least 1 valid row extracted
   useEffect(() => {
@@ -163,6 +289,217 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
       morphStrength: strength,
     };
     onUpdateConfigAndRerun(updated);
+  };
+
+  const updateResultRow = (updatedRow: ProcessedRow) => {
+    const rows = result.rows.map((row) =>
+      row.rowIndex === updatedRow.rowIndex ? updatedRow : row
+    );
+    onUpdateResult({
+      ...result,
+      rows,
+      processedCount: rows.filter((row) => !row.isEmpty).length,
+      skippedCount: rows.filter((row) => row.isEmpty).length,
+    });
+  };
+
+  const commitCanvasRow = (row: ProcessedRow, isManuallyEdited = true) => {
+    const canvas = canvasRefs.current[row.rowIndex];
+    if (!canvas) return;
+
+    const dataUrl = applyPngDpiMetadata(canvas.toDataURL('image/png'), config.outputDpi);
+    const stats = getCanvasInkStats(
+      canvas,
+      row.totalPixelCount,
+      config.emptyRowThresholdPercent
+    );
+
+    updateResultRow({
+      ...row,
+      ...stats,
+      dataUrl,
+      originalDataUrl: isManuallyEdited ? row.originalDataUrl ?? row.dataUrl : undefined,
+      isManuallyEdited,
+    });
+  };
+
+  const applyRowDataUrl = async (
+    row: ProcessedRow,
+    dataUrl: string,
+    isManuallyEdited: boolean
+  ) => {
+    const canvas = canvasRefs.current[row.rowIndex] ?? document.createElement('canvas');
+    await drawDataUrlToCanvas(canvas, dataUrl, row.width, row.height);
+
+    const updatedDataUrl = applyPngDpiMetadata(canvas.toDataURL('image/png'), config.outputDpi);
+    const stats = getCanvasInkStats(
+      canvas,
+      row.totalPixelCount,
+      config.emptyRowThresholdPercent
+    );
+
+    updateResultRow({
+      ...row,
+      ...stats,
+      dataUrl: updatedDataUrl,
+      originalDataUrl: isManuallyEdited ? row.originalDataUrl ?? row.dataUrl : undefined,
+      isManuallyEdited,
+    });
+  };
+
+  const pushEditHistory = (row: ProcessedRow) => {
+    const canvas = canvasRefs.current[row.rowIndex];
+    if (!canvas) return;
+
+    const snapshot = applyPngDpiMetadata(canvas.toDataURL('image/png'), config.outputDpi);
+    setEditHistory((prev) => {
+      const current = prev[row.rowIndex] ?? [];
+      return {
+        ...prev,
+        [row.rowIndex]: [...current, snapshot].slice(-MAX_EDIT_HISTORY),
+      };
+    });
+  };
+
+  const getCanvasPoint = (
+    event: React.PointerEvent<HTMLCanvasElement>,
+    canvas: HTMLCanvasElement
+  ) => {
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+
+    return {
+      x: ((event.clientX - rect.left) / rect.width) * canvas.width,
+      y: ((event.clientY - rect.top) / rect.height) * canvas.height,
+    };
+  };
+
+  const applyEraserStroke = (
+    event: React.PointerEvent<HTMLCanvasElement>,
+    rowIndex: number
+  ) => {
+    const canvas = canvasRefs.current[rowIndex];
+    if (!canvas) return;
+
+    const point = getCanvasPoint(event, canvas);
+    if (!point) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const state = drawingStateRef.current;
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = eraserSize;
+    ctx.beginPath();
+    if (state.rowIndex === rowIndex && state.lastPoint) {
+      ctx.moveTo(state.lastPoint.x, state.lastPoint.y);
+    } else {
+      ctx.moveTo(point.x, point.y);
+    }
+    ctx.lineTo(point.x, point.y);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, eraserSize / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    drawingStateRef.current = {
+      ...state,
+      rowIndex,
+      lastPoint: point,
+    };
+  };
+
+  const handleStartRowEdit = (row: ProcessedRow) => {
+    setEditingRowIndex(row.rowIndex);
+    setEditHistory((prev) => ({
+      ...prev,
+      [row.rowIndex]: prev[row.rowIndex] ?? [],
+    }));
+  };
+
+  const handleFinishRowEdit = (row: ProcessedRow) => {
+    if (editingRowIndex === row.rowIndex) {
+      commitCanvasRow(row, Boolean(row.isManuallyEdited));
+      setEditingRowIndex(null);
+    }
+  };
+
+  const handleUndoRowEdit = async (row: ProcessedRow) => {
+    const history = editHistory[row.rowIndex] ?? [];
+    const previousDataUrl = history[history.length - 1];
+    if (!previousDataUrl) return;
+
+    setEditHistory((prev) => ({
+      ...prev,
+      [row.rowIndex]: (prev[row.rowIndex] ?? []).slice(0, -1),
+    }));
+    await applyRowDataUrl(row, previousDataUrl, previousDataUrl !== row.originalDataUrl);
+  };
+
+  const handleResetRowEdit = async (row: ProcessedRow) => {
+    if (!row.originalDataUrl) return;
+
+    setEditHistory((prev) => ({
+      ...prev,
+      [row.rowIndex]: [],
+    }));
+    await applyRowDataUrl(row, row.originalDataUrl, false);
+  };
+
+  const handleEraserPointerDown = (
+    event: React.PointerEvent<HTMLCanvasElement>,
+    row: ProcessedRow
+  ) => {
+    if (editingRowIndex !== row.rowIndex) return;
+
+    const canvas = canvasRefs.current[row.rowIndex];
+    if (!canvas) return;
+
+    event.preventDefault();
+    canvas.setPointerCapture(event.pointerId);
+    pushEditHistory(row);
+    drawingStateRef.current = {
+      rowIndex: row.rowIndex,
+      pointerId: event.pointerId,
+      lastPoint: null,
+    };
+    setIsErasing(true);
+    applyEraserStroke(event, row.rowIndex);
+  };
+
+  const handleEraserPointerMove = (
+    event: React.PointerEvent<HTMLCanvasElement>,
+    row: ProcessedRow
+  ) => {
+    const state = drawingStateRef.current;
+    if (state.rowIndex !== row.rowIndex || state.pointerId !== event.pointerId) return;
+
+    event.preventDefault();
+    applyEraserStroke(event, row.rowIndex);
+  };
+
+  const handleEraserPointerEnd = (
+    event: React.PointerEvent<HTMLCanvasElement>,
+    row: ProcessedRow
+  ) => {
+    const state = drawingStateRef.current;
+    if (state.rowIndex !== row.rowIndex || state.pointerId !== event.pointerId) return;
+
+    event.preventDefault();
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    commitCanvasRow(row, true);
+    drawingStateRef.current = {
+      rowIndex: null,
+      pointerId: null,
+      lastPoint: null,
+    };
+    setIsErasing(false);
   };
 
   // Copy single PNG image to clipboard
@@ -821,12 +1158,17 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
 
       {/* Row Cards List */}
       <div className="space-y-4">
-        {result.rows.map((row) => (
+        {result.rows.map((row) => {
+          const isEditing = editingRowIndex === row.rowIndex;
+          const canEditRow = !row.isEmpty || row.isManuallyEdited;
+          const historyCount = editHistory[row.rowIndex]?.length ?? 0;
+
+          return (
           <div
             key={row.rowIndex}
             id={`result-row-card-${row.rowIndex}`}
             className={`bg-white rounded-2xl border transition-all overflow-hidden ${
-              row.isEmpty
+              row.isEmpty && !row.isManuallyEdited
                 ? 'border-stone-200/60 opacity-60 bg-stone-50/50'
                 : 'border-stone-200 shadow-xs hover:border-stone-300'
             }`}
@@ -842,7 +1184,7 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
                     {row.title}
                   </h3>
                   <span className="text-[11px] text-stone-500">
-                    {row.isEmpty
+                    {row.isEmpty && !row.isManuallyEdited
                       ? '字迹密度低于 0.3% 容错阈值，已自动丢弃'
                       : `字迹像素占比: ${row.inkDensityPercent}% (${row.inkPixelCount} px) · 标准 ${row.width}×${row.height}px`}
                   </span>
@@ -850,13 +1192,47 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
               </div>
 
               {/* Status Badge & Actions */}
-              <div className="flex items-center gap-2">
-                {row.isEmpty ? (
+              <div className="flex items-center gap-2 flex-wrap justify-end">
+                {row.isEmpty && !row.isManuallyEdited ? (
                   <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-stone-200 text-stone-600">
                     空行跳过
                   </span>
                 ) : (
                   <>
+                    {row.isManuallyEdited && (
+                      <span className="px-2 py-1 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                        已手动修图
+                      </span>
+                    )}
+
+                    {canEditRow && (
+                      <button
+                        id={`erase-row-btn-${row.rowIndex}`}
+                        type="button"
+                        onClick={() =>
+                          isEditing ? handleFinishRowEdit(row) : handleStartRowEdit(row)
+                        }
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border shadow-xs transition-colors ${
+                          isEditing
+                            ? 'bg-amber-500 hover:bg-amber-600 text-white border-amber-500 font-bold'
+                            : 'bg-white hover:bg-amber-50 text-amber-800 border-amber-200'
+                        }`}
+                        title={isEditing ? '完成手动擦除' : '手动擦除多余墨点'}
+                      >
+                        {isEditing ? (
+                          <>
+                            <Check className="w-3.5 h-3.5" />
+                            完成修图
+                          </>
+                        ) : (
+                          <>
+                            <Eraser className="w-3.5 h-3.5" />
+                            手动擦除
+                          </>
+                        )}
+                      </button>
+                    )}
+
                     <button
                       id={`copy-row-btn-${row.rowIndex}`}
                       type="button"
@@ -894,26 +1270,101 @@ export const ResultViewer: React.FC<ResultViewerProps> = ({
 
             {/* Row Image Preview Area */}
             <div className="p-4">
-              {row.isEmpty ? (
+              {row.isEmpty && !row.isManuallyEdited ? (
                 <div className="h-28 rounded-xl border border-dashed border-stone-300 flex flex-col items-center justify-center text-stone-400 text-xs">
                   <AlertCircle className="w-6 h-6 mb-1 text-stone-300" />
                   <span>此行未书写内容，符合需求 3.5 空行过滤规则</span>
                 </div>
               ) : (
-                <div
-                  style={getBackgroundStyle()}
-                  className="rounded-xl border border-stone-200/80 p-3 sm:p-5 flex items-center justify-center overflow-x-auto shadow-inner transition-colors"
-                >
-                  <img
-                    src={row.dataUrl}
-                    alt={row.title}
-                    className="max-h-28 object-contain drop-shadow-sm select-none"
-                  />
+                <div className="space-y-3">
+                  {isEditing && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-3 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 text-xs text-amber-950">
+                        <Eraser className="w-4 h-4 text-amber-600" />
+                        <span className="font-bold">拖动画布擦除多余墨点</span>
+                        {isErasing && (
+                          <span className="font-mono text-[10px] text-amber-700 bg-white/80 px-2 py-0.5 rounded border border-amber-200">
+                            擦除中
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex items-center gap-2 min-w-[210px]">
+                          <span className="text-[11px] font-semibold text-stone-600 whitespace-nowrap">
+                            橡皮 {eraserSize}px
+                          </span>
+                          <input
+                            type="range"
+                            min="8"
+                            max="96"
+                            step="2"
+                            value={eraserSize}
+                            onChange={(e) => setEraserSize(Number(e.target.value))}
+                            className="w-32 accent-amber-500"
+                            aria-label="橡皮大小"
+                          />
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleUndoRowEdit(row)}
+                          disabled={historyCount === 0}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-stone-700 bg-white hover:bg-stone-100 border border-stone-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                          title="撤销上一步擦除"
+                        >
+                          <Undo2 className="w-3.5 h-3.5" />
+                          撤销
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleResetRowEdit(row)}
+                          disabled={!row.originalDataUrl}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-stone-700 bg-white hover:bg-stone-100 border border-stone-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                          title="还原为自动处理结果"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          还原
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div
+                    style={getBackgroundStyle()}
+                    className={`rounded-xl border p-3 sm:p-5 flex items-center justify-center overflow-x-auto shadow-inner transition-colors ${
+                      isEditing ? 'border-amber-300 ring-2 ring-amber-200/70' : 'border-stone-200/80'
+                    }`}
+                  >
+                    {isEditing ? (
+                      <canvas
+                        ref={(el) => {
+                          canvasRefs.current[row.rowIndex] = el;
+                        }}
+                        width={row.width}
+                        height={row.height}
+                        onPointerDown={(event) => handleEraserPointerDown(event, row)}
+                        onPointerMove={(event) => handleEraserPointerMove(event, row)}
+                        onPointerUp={(event) => handleEraserPointerEnd(event, row)}
+                        onPointerCancel={(event) => handleEraserPointerEnd(event, row)}
+                        className="max-h-48 w-auto object-contain drop-shadow-sm select-none touch-none cursor-crosshair"
+                        aria-label={`${row.title} 手动擦除画布`}
+                      />
+                    ) : (
+                      <img
+                        src={row.dataUrl}
+                        alt={row.title}
+                        className="max-h-28 object-contain drop-shadow-sm select-none"
+                      />
+                    )}
+                  </div>
                 </div>
               )}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
