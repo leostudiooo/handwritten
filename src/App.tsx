@@ -105,9 +105,11 @@ export default function App() {
     setLadderMesh(initialMesh);
 
     try {
+      const scaleX = origImg.naturalWidth / prevImg.naturalWidth;
+      const scaleY = origImg.naturalHeight / prevImg.naturalHeight;
       const fullResInitialMesh: LadderPoints = initialMesh.map((pt) => ({
-        x: Math.round(pt.x * ratio),
-        y: Math.round(pt.y * ratio),
+        x: Math.round(pt.x * scaleX),
+        y: Math.round(pt.y * scaleY),
       })) as LadderPoints;
       const imageCanvas = document.createElement('canvas');
       imageCanvas.width = origImg.naturalWidth;
@@ -146,10 +148,13 @@ export default function App() {
     setIsProcessing(true);
 
     try {
-      // 1. Map preview 8 points back to ORIGINAL image space (point.x * scaleRatio)
+      // 1. Map preview points back to ORIGINAL image space.
+      // Preview dimensions can be rounded independently, so keep X/Y scales separate.
+      const scaleX = originalImage.naturalWidth / previewImage.naturalWidth;
+      const scaleY = originalImage.naturalHeight / previewImage.naturalHeight;
       const fullResMesh: LadderPoints = ladderMesh.map((pt) => ({
-        x: Math.round(pt.x * scaleRatio),
-        y: Math.round(pt.y * scaleRatio),
+        x: Math.round(pt.x * scaleX),
+        y: Math.round(pt.y * scaleY),
       })) as LadderPoints;
 
       // 2. Prepare original image ImageData

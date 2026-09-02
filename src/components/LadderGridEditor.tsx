@@ -47,6 +47,22 @@ function distToSegment(p: Point, v: Point, w: Point): number {
   return Math.hypot(p.x - (v.x + t * (w.x - v.x)), p.y - (v.y + t * (w.y - v.y)));
 }
 
+function getCanvasContentRect(canvas: HTMLCanvasElement) {
+  const rect = canvas.getBoundingClientRect();
+  const style = window.getComputedStyle(canvas);
+  const borderLeft = parseFloat(style.borderLeftWidth) || 0;
+  const borderRight = parseFloat(style.borderRightWidth) || 0;
+  const borderTop = parseFloat(style.borderTopWidth) || 0;
+  const borderBottom = parseFloat(style.borderBottomWidth) || 0;
+
+  return {
+    left: rect.left + borderLeft,
+    top: rect.top + borderTop,
+    width: Math.max(1, rect.width - borderLeft - borderRight),
+    height: Math.max(1, rect.height - borderTop - borderBottom),
+  };
+}
+
 export const LadderGridEditor: React.FC<LadderGridEditorProps> = ({
   previewImg,
   scaleRatio: _scaleRatio,
@@ -156,7 +172,7 @@ export const LadderGridEditor: React.FC<LadderGridEditorProps> = ({
   const getCanvasCoordsFromEvent = (e: React.MouseEvent | React.TouchEvent | MouseEvent | TouchEvent): Point | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
-    const rect = canvas.getBoundingClientRect();
+    const rect = getCanvasContentRect(canvas);
 
     let clientX = 0;
     let clientY = 0;
@@ -630,6 +646,7 @@ export const LadderGridEditor: React.FC<LadderGridEditorProps> = ({
     // 1. Point hit test
     const hitIdx = findNearestPoint(pt);
     if (hitIdx !== null) {
+      const selectedPoint = ladderMesh[hitIdx];
       setActivePointIndex(hitIdx);
       setActiveLineIndex(null);
       setIsDragging(true);
@@ -637,8 +654,8 @@ export const LadderGridEditor: React.FC<LadderGridEditorProps> = ({
       setMagnifierPos({
         clientX,
         clientY,
-        imgX: pt.x,
-        imgY: pt.y,
+        imgX: selectedPoint.x,
+        imgY: selectedPoint.y,
       });
       return;
     }
@@ -679,8 +696,8 @@ export const LadderGridEditor: React.FC<LadderGridEditorProps> = ({
         setMagnifierPos({
           clientX,
           clientY,
-          imgX: clampedX,
-          imgY: clampedY,
+          imgX: newPoint.x,
+          imgY: newPoint.y,
         });
       } else if (activeLineIndex !== null) {
         // Dragging midline along perspective axis
@@ -915,6 +932,8 @@ export const LadderGridEditor: React.FC<LadderGridEditorProps> = ({
             style={{
               width: canvasDimensions.width,
               height: canvasDimensions.height,
+              display: 'block',
+              boxSizing: 'content-box',
               touchAction: 'none',
               cursor: isDragging
                 ? 'grabbing'
@@ -932,7 +951,7 @@ export const LadderGridEditor: React.FC<LadderGridEditorProps> = ({
             onTouchMove={handlePointerMove}
             onTouchEnd={handlePointerUp}
             onTouchCancel={handlePointerUp}
-            className="rounded-xl shadow-lg border border-stone-700/50"
+            className="rounded-xl shadow-lg ring-1 ring-stone-700/50"
           />
 
           {/* Floating 2.4x Magnifier Loupe */}
